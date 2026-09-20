@@ -55,6 +55,8 @@ intermittent "Oops! Something went wrong" page by clicking Retry.
 - All live screenshots side by side (click to zoom), with per-tab **Reload** buttons
 - **Google Finance research & financial analysis bar** — steer the Google Finance automation window to any specific share (e.g. `RELIANCE:NSE`, `TCS`, `INFY`, `HDFCBANK`, or custom Google Finance URL) with one-click quick presets.
 - **Adviser's note — one-week swing call** (Stocks screen) — see [One-week swing adviser](#one-week-swing-adviser).
+- **Batch analysis** — import a screener CSV, preview every row, pick the ones you want, and get a
+  ranked shortlist of one-week calls — see [Batch](#batch--screen-a-whole-watchlist).
 - **Collapse/expand** screenshot panels by clicking titles or carets. The choice is remembered in `localStorage`.
 - **Decision snapshot** — the call (`Go long` / `Go short` / `Wait` / `Exit` / `Stand aside`)
   with a one-line actionable instruction, conviction and chart-confidence meters, spot with the
@@ -159,6 +161,9 @@ Everything persistent lives in **Settings** (gear icon, <kbd>Esc</kbd> to close)
 | `POST /api/google-finance/toggle` | Turn Google Finance capture on or off |
 | `POST /api/google-finance/target` | Navigate Google Finance window to a share or URL — body `{ "query": "RELIANCE:NSE" }` |
 | `POST /api/google-finance/analyse` | Capture the Google Finance AI Research screen and return a sized one-week swing call — body `{ "query": "TATAMOTORS:NSE", "capital": 250000, "riskPct": 1.5, "maxAllocPct": 30 }` (all optional) |
+| `GET /api/stocks/batch` | State of the running (or last) batch |
+| `POST /api/stocks/batch` | Start a batch — body `{ "items": [{ "symbol": "QUINT", "name": "Quint Digital" }], "capital": 250000, "riskPct": 1.5 }`. Max 60 symbols, one batch at a time |
+| `POST /api/stocks/batch/stop` | Stop after the symbol currently being analysed |
 | `POST /api/window/show` / `POST /api/window/hide` | Bring the capture browser window back, or tuck it away |
 | `POST /api/ollama/unload` | Drop the model from memory immediately |
 | `GET /api/dom/:id?selector=&mode=controls` | Read-only DOM inspector for tuning selectors |
@@ -264,6 +269,7 @@ src/ollama.js      vision prompt, JSON schema, Ollama call
 src/gemini.js      the same two calls against the Gemini API
 src/ai.js          picks the provider from AI_PROVIDER
 src/swing.js       one-week swing adviser: prompt, trading window, response schema
+src/batch.js       runs the swing analysis over a watchlist, one symbol at a time
 src/quote.js       live NIFTY 50 spot (NSE → Yahoo) + spot cross-check
 src/scheduler.js   the every-minute loop
 src/store.js       JSONL run history + screenshot pruning
@@ -348,6 +354,36 @@ screen all produce `NEUTRAL`/`AVOID` with low conviction and a plain "do nothing
 
 Calls are kept in **Stock Analysis History** with their verdict, grade, conviction and screenshot;
 clicking one replays the full note.
+
+### Batch — screen a whole watchlist
+
+The same call, run over a list instead of one share. It is built for a screener export: the file
+you already download at the end of the day goes in, a ranked shortlist comes out.
+
+1. **Import** — drop a CSV on the panel (or browse). Any file with a symbol column works; a
+   screener export like `Sr., Stock Name, Symbol, close, %_change, volume` is read as-is, quoted
+   commas, BOM and all. The columns are detected by header name, falling back to whichever column
+   actually holds tickers. Parsing happens in the browser — the file is never uploaded.
+2. **Pick** — every row is previewed with its close, change and volume, and **nothing is ticked
+   for you**. Rows that are rarely swing-tradeable are flagged (`Fund / ETF`, `Rights entitlement`,
+   `Below ₹5`) so a screener full of liquid ETFs doesn't quietly eat an hour. Quick picks —
+   **Tradeable**, **Top 10**, **Top 25**, **All**, **None** — make a sensible selection one click.
+   The estimate next to the button is honest: roughly a minute a share, refined by the measured
+   average once a batch has run.
+3. **Run** — symbols are analysed one at a time (the capture browser is a single shared
+   resource, so the on-demand button is held until the batch finishes). Progress, the symbol in
+   flight and an ETA stream to the dashboard; **Stop** ends the run after the current symbol
+   rather than abandoning a half-finished capture. A symbol that fails is recorded and the batch
+   carries on.
+
+The result is a **ranked shortlist** — best call first, by verdict, then setup grade, then
+conviction — showing entry, stop, target, reward:risk and the share count for your brief. Click a
+row for the full adviser note. **Export CSV** writes the shortlist back out, and every call also
+lands in Stock Analysis History on its own.
+
+Batches are capped at 60 symbols, duplicates are collapsed, and only one batch runs at a time. A
+batch started during market hours interleaves with the scheduled index captures, so it will take
+longer than the estimate.
 
 ## Disclaimer
 

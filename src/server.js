@@ -4,6 +4,7 @@ import { checkProvider, loadedModels, unloadModel, analyseFinancialReport } from
 import { buildTrend } from './trend.js';
 import { getQuote } from './quote.js';
 import { tradingWindow, applySizing } from './swing.js';
+import { BatchRunner, MAX_BATCH } from './batch.js';
 
 export function createServer({ store, scheduler, capture }) {
   const app = express();
@@ -240,65 +241,117 @@ export function createServer({ store, scheduler, capture }) {
     }
   });
 
+  // The client brief the adviser sizes against. Clamped so a stray value from the
+  // dashboard can never produce a nonsensical position.
+  const briefFrom = (body = {}) => {
+    const clamp = (v, lo, hi, dflt) => {
+      const n = Number(v);
+      return Number.isFinite(n) && n > 0 ? Math.min(Math.max(n, lo), hi) : dflt;
+    };
+    return {
+      capital: clamp(body.capital, 1000, 1e9, config.advisor.capital),
+      riskPct: clamp(body.riskPct, 0.25, 10, config.advisor.riskPct),
+      maxAllocPct: clamp(body.maxAllocPct, 5, 100, config.advisor.maxAllocPct),
+      currency: config.advisor.currency,
+      window: tradingWindow(new Date(), config.advisor.sessions),
+    };
+  };
+
+  /**
+   * One share, end to end: point the Google Finance window at it, screenshot the AI
+   * Research answer, get the swing call, size it, and file it in history.
+   * Shared by the on-demand button and the batch runner so both behave identically.
+   */
+  const analyseStock = async ({ query, context }) => {
+    const d = new Date();
+    const pad2 = (n) => String(n).padStart(2, '0');
+    let stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(
+      d.getMinutes(),
+    )}${pad2(d.getSeconds())}`;
+    // Stamps are second-resolution; two runs inside the same second would otherwise
+    // share an id and collide in history.
+    for (let n = 2; store.getStockRun(`stock-${stamp}`); n += 1) stamp = `${stamp.split('_')[0]}_${n}`;
+
+    const shot = await capture.captureGoogleFinanceResearch({ symbol: query, stamp });
+    if (!shot.ok) {
+      return { ok: false, error: shot.error || 'Failed to capture the Google Finance AI Research screen.' };
+    }
+
+    const report = await analyseFinancialReport(shot, { context });
+    if (!report.ok) return { ok: false, shot, report, error: report.error };
+    if (!report.parsed) {
+      return { ok: false, shot, report, error: 'The model did not return a usable report for this symbol.' };
+    }
+
+    // Sizing and reward:risk are recomputed from the levels the model quoted, so the
+    // share count on screen is arithmetic rather than the model's mental maths.
+    applySizing(report.parsed, context);
+    const p = report.parsed;
+    const item = {
+      id: `stock-${stamp}`,
+      ticker: p.ticker || query || 'Stock',
+      target_name: p.target_name || p.ticker || query || 'Stock',
+      at: new Date().toISOString(),
+      verdict: p.short_term_verdict || 'NEUTRAL',
+      grade: p.trade_grade || '',
+      setup: p.setup_type || '',
+      conviction: p.conviction_score || 0,
+      price: p.current_price || '—',
+      day_change: p.day_change || '',
+      health: p.financial_health || 'neutral',
+      horizon: p.time_horizon || `Exit by ${context.window.exitBy}`,
+      summary: p.verdict_summary || p.analyst_takeaway || '',
+      shot: shot?.url ? { file: shot.file, url: shot.url, label: shot.label } : null,
+      brief: { capital: context.capital, riskPct: context.riskPct, maxAllocPct: context.maxAllocPct },
+      report,
+    };
+    await store.addStockRun(item);
+    return { ok: true, shot, report, item };
+  };
+
   app.post('/api/google-finance/analyse', async (req, res) => {
     try {
       const query = req.body?.query || req.body?.ticker || req.body?.symbol;
-      const d = new Date();
-      const pad2 = (n) => String(n).padStart(2, '0');
-      const stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(
-        d.getMinutes(),
-      )}${pad2(d.getSeconds())}`;
-      const shot = await capture.captureGoogleFinanceResearch({ symbol: query, stamp });
-      if (!shot.ok) {
-        return res.status(502).json({ ok: false, error: shot.error || 'Failed to capture Google Finance AI Research screenshot' });
+      const context = briefFrom(req.body);
+      const out = await analyseStock({ query, context });
+      if (!out.ok && !out.report) {
+        return res.status(502).json({ ok: false, error: out.error });
       }
-
-      // The client brief the adviser sizes against. Clamped so a stray value from the
-      // dashboard can never produce a nonsensical position.
-      const clamp = (v, lo, hi, dflt) => {
-        const n = Number(v);
-        return Number.isFinite(n) && n > 0 ? Math.min(Math.max(n, lo), hi) : dflt;
-      };
-      const context = {
-        capital: clamp(req.body?.capital, 1000, 1e9, config.advisor.capital),
-        riskPct: clamp(req.body?.riskPct, 0.25, 10, config.advisor.riskPct),
-        maxAllocPct: clamp(req.body?.maxAllocPct, 5, 100, config.advisor.maxAllocPct),
-        currency: config.advisor.currency,
-        window: tradingWindow(new Date(), config.advisor.sessions),
-      };
-
-      const report = await analyseFinancialReport(shot, { context });
-      let item = null;
-      if (report.ok && report.parsed) {
-        // Sizing and reward:risk are recomputed from the levels the model quoted, so the
-        // share count on screen is arithmetic rather than the model's mental maths.
-        applySizing(report.parsed, context);
-        const p = report.parsed;
-        item = {
-          id: `stock-${stamp}`,
-          ticker: p.ticker || query || 'Stock',
-          target_name: p.target_name || p.ticker || query || 'Stock',
-          at: new Date().toISOString(),
-          verdict: p.short_term_verdict || 'NEUTRAL',
-          grade: p.trade_grade || '',
-          setup: p.setup_type || '',
-          conviction: p.conviction_score || 0,
-          price: p.current_price || '—',
-          day_change: p.day_change || '',
-          health: p.financial_health || 'neutral',
-          horizon: p.time_horizon || `Exit by ${context.window.exitBy}`,
-          summary: p.verdict_summary || p.analyst_takeaway || '',
-          shot: shot?.url ? { file: shot.file, url: shot.url, label: shot.label } : null,
-          brief: { capital: context.capital, riskPct: context.riskPct, maxAllocPct: context.maxAllocPct },
-          report,
-        };
-        await store.addStockRun(item);
-      }
-      return res.json({ ok: report.ok, shot, report, item, context });
+      return res.json({ ok: out.ok, shot: out.shot, report: out.report, item: out.item || null, context, error: out.error });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err.message });
     }
   });
+
+  // --- BATCH ANALYSIS ------------------------------------------------
+  const batch = new BatchRunner({
+    runOne: ({ symbol, context }) => analyseStock({ query: symbol, context }),
+  });
+  batch.on('batch', (state) => scheduler.emit('batch', state));
+
+  app.get('/api/stocks/batch', (req, res) => res.json(batch.snapshot()));
+
+  app.post('/api/stocks/batch', (req, res) => {
+    const raw = Array.isArray(req.body?.items) ? req.body.items : [];
+    const seen = new Set();
+    const items = [];
+    for (const entry of raw) {
+      const symbol = String(entry?.symbol || entry || '').trim().toUpperCase();
+      if (!symbol || seen.has(symbol)) continue;
+      seen.add(symbol);
+      items.push({ symbol, name: String(entry?.name || '').trim() });
+    }
+    if (!items.length) return res.status(400).json({ ok: false, error: 'No valid symbols in the request.' });
+
+    try {
+      const state = batch.start({ items, context: briefFrom(req.body) });
+      return res.json({ ok: true, max: MAX_BATCH, skipped: raw.length - items.length, state });
+    } catch (err) {
+      return res.status(409).json({ ok: false, error: err.message, state: batch.snapshot() });
+    }
+  });
+
+  app.post('/api/stocks/batch/stop', (req, res) => res.json({ ok: true, state: batch.stop() }));
 
   // --- STOCKS ANALYSIS HISTORY ENDPOINTS -----------------------------
   app.get('/api/stocks/history', (req, res) => {
@@ -388,6 +441,7 @@ export function createServer({ store, scheduler, capture }) {
     const onTokenStart = (e) => send('analysis-start', e);
     const onToken = (e) => send('analysis-token', e);
     const onTokenEnd = (e) => send('analysis-end', e);
+    const onBatch = (e) => send('batch', e);
 
     scheduler.on('status', onStatus);
     scheduler.on('run', onRun);
@@ -395,6 +449,7 @@ export function createServer({ store, scheduler, capture }) {
     scheduler.on('analysis-start', onTokenStart);
     scheduler.on('analysis-token', onToken);
     scheduler.on('analysis-end', onTokenEnd);
+    scheduler.on('batch', onBatch);
 
     const ping = setInterval(() => res.write(': ping\n\n'), 20000);
 
@@ -406,6 +461,7 @@ export function createServer({ store, scheduler, capture }) {
       scheduler.off('analysis-start', onTokenStart);
       scheduler.off('analysis-token', onToken);
       scheduler.off('analysis-end', onTokenEnd);
+      scheduler.off('batch', onBatch);
     });
   });
 

@@ -1182,6 +1182,7 @@ function liveEnd() {
 function connect() {
   const es = new EventSource('/api/events');
   es.addEventListener('status', (e) => applyStatus(JSON.parse(e.data)));
+es.addEventListener('batch', (e) => renderBatch(JSON.parse(e.data)));
   es.addEventListener('run', (e) => {
     const run = JSON.parse(e.data);
     if (!pinned) showRun(run);
@@ -1405,8 +1406,8 @@ $('gfAnalyseBtn').onclick = async () => {
   } catch (err) {
     toast(`Error: ${err.message}`, 'bad');
   } finally {
-    btn.disabled = false;
     btn.innerHTML = origHtml;
+    setSingleAnalyseBlocked(Boolean(batchState?.active));
   }
 };
 
@@ -1433,6 +1434,500 @@ if ($('gfShotToggle')) {
 // Bind Screen Switching Tabs
 if ($('tabMarket')) $('tabMarket').onclick = () => switchScreen('market');
 if ($('tabStocks')) $('tabStocks').onclick = () => switchScreen('stocks');
+
+/* ---------- Batch analysis: a screener CSV in, a ranked shortlist out ---------- */
+
+/** RFC-4180-ish: quoted fields, escaped quotes, commas inside quotes, CRLF, BOM. */
+function parseCsv(text) {
+  const rows = [];
+  let row = [];
+  let field = '';
+  let quoted = false;
+  const src = text.replace(/^﻿/, '');
+
+  for (let i = 0; i < src.length; i += 1) {
+    const c = src[i];
+    if (quoted) {
+      if (c === '"') {
+        if (src[i + 1] === '"') { field += '"'; i += 1; } else quoted = false;
+      } else field += c;
+    } else if (c === '"') quoted = true;
+    else if (c === ',') { row.push(field); field = ''; }
+    else if (c === '\n') { row.push(field); rows.push(row); row = []; field = ''; }
+    else if (c !== '\r') field += c;
+  }
+  if (field !== '' || row.length) { row.push(field); rows.push(row); }
+  return rows.filter((r) => r.some((c) => c.trim() !== ''));
+}
+
+const colIndex = (headers, ...patterns) => {
+  for (const re of patterns) {
+    const i = headers.findIndex((h) => re.test(h));
+    if (i !== -1) return i;
+  }
+  return -1;
+};
+
+const looksLikeTicker = (v) => /^[A-Z][A-Z0-9&_-]{1,19}$/.test(String(v || '').trim());
+
+/**
+ * A one-week swing needs a liquid, tradeable share. Funds, rights entitlements and
+ * near-zero prices come through screener exports too, so they are flagged and left
+ * unticked rather than silently dropped.
+ */
+function tradeabilityNote(symbol, name, close) {
+  const sym = String(symbol || '').toUpperCase();
+  const nm = String(name || '').toUpperCase();
+  if (/-RE$/.test(sym) || /\bRIGHTS?\b|\bRE\b$/.test(nm)) return 'Rights entitlement';
+  if (/\bETF\b|\bFUND\b|LIQUID|BEES|GOLD|SILVER|NIFTY|SENSEX|NASDAQ/.test(nm) || /ETF$|BEES$|LIQ/.test(sym)) {
+    return 'Fund / ETF';
+  }
+  const price = Number(String(close || '').replace(/[^\d.]/g, ''));
+  if (Number.isFinite(price) && price > 0 && price < 5) return 'Below ₹5';
+  return '';
+}
+
+let batchRows = [];           // every parsed row
+let batchState = null;        // the server's view of the running/last job
+const BATCH_MAX = 60;
+
+function readBatchCsv(file) {
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      loadBatchRows(parseCsv(String(reader.result)), file.name);
+    } catch (err) {
+      toast(`Could not read ${file.name}: ${err.message}`, 'bad');
+    }
+  };
+  reader.onerror = () => toast(`Could not read ${file.name}`, 'bad');
+  reader.readAsText(file);
+}
+
+function loadBatchRows(rows, fileName) {
+  if (!rows.length) {
+    toast('That CSV looks empty.', 'bad');
+    return;
+  }
+
+  const header = rows[0].map((h) => h.trim());
+  const headerLooksLikeData = looksLikeTicker(header[0]) || header.every((h) => /^[\d.,%-]*$/.test(h));
+  const headers = headerLooksLikeData ? header.map((_, i) => `col${i}`) : header;
+  const body = headerLooksLikeData ? rows : rows.slice(1);
+
+  let symbolIdx = colIndex(headers, /^(symbol|ticker|scrip|code)$/i, /symbol|ticker|scrip/i);
+  const nameIdx = colIndex(headers, /(stock|company).*name|^name$/i, /name|company/i);
+  const closeIdx = colIndex(headers, /^(close|price|ltp|cmp)$/i, /close|price|ltp|cmp/i);
+  const chgIdx = colIndex(headers, /change|chg|%/i);
+  const volIdx = colIndex(headers, /volume|qty|traded/i);
+
+  // No usable header: fall back to the column that actually holds tickers.
+  if (symbolIdx === -1) {
+    const widths = headers.map((_, i) => body.filter((r) => looksLikeTicker(r[i])).length);
+    symbolIdx = widths.indexOf(Math.max(...widths));
+  }
+  if (symbolIdx === -1 || !body.length) {
+    toast('No symbol column found in that CSV.', 'bad');
+    return;
+  }
+
+  const seen = new Set();
+  batchRows = [];
+  for (const r of body) {
+    const symbol = String(r[symbolIdx] || '').trim().toUpperCase();
+    if (!symbol || seen.has(symbol)) continue;
+    seen.add(symbol);
+    const name = nameIdx !== -1 ? String(r[nameIdx] || '').trim() : '';
+    const close = closeIdx !== -1 ? String(r[closeIdx] || '').trim() : '';
+    batchRows.push({
+      symbol,
+      name,
+      close,
+      change: chgIdx !== -1 ? String(r[chgIdx] || '').trim() : '',
+      volume: volIdx !== -1 ? String(r[volIdx] || '').trim() : '',
+      note: tradeabilityNote(symbol, name, close),
+      selected: false,
+    });
+  }
+
+  if (!batchRows.length) {
+    toast('No symbols found in that CSV.', 'bad');
+    return;
+  }
+
+  // Nothing is ticked on import: the whole file is previewed and the choice is the
+  // user's. The quick picks make a sensible selection one click away.
+  const flagged = batchRows.filter((r) => r.note).length;
+  $('batchFileName').textContent = fileName || 'watchlist.csv';
+  $('batchRowInfo').textContent =
+    `${batchRows.length} symbol${batchRows.length === 1 ? '' : 's'}${flagged ? ` · ${flagged} flagged` : ''}`;
+  $('batchPick').hidden = false;
+  renderBatchRows();
+  $('batchPick').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  toast(`${batchRows.length} stocks loaded — pick the ones to analyse`, 'ok');
+}
+
+function selectBatch(mode) {
+  const tradeable = (r) => !r.note;
+  if (mode === 'none') batchRows.forEach((r) => { r.selected = false; });
+  else if (mode === 'all') batchRows.forEach((r, i) => { r.selected = i < BATCH_MAX; });
+  else if (mode === 'tradeable') {
+    let n = 0;
+    batchRows.forEach((r) => { r.selected = tradeable(r) && n < BATCH_MAX && ++n > 0; });
+  } else {
+    const limit = Number(mode) || 10;
+    let n = 0;
+    batchRows.forEach((r) => { r.selected = tradeable(r) && n < limit && ++n > 0; });
+  }
+  renderBatchRows();
+}
+
+const selectedBatchRows = () => batchRows.filter((r) => r.selected);
+
+function renderBatchRows() {
+  const tbody = $('batchRows');
+  if (!tbody) return;
+  tbody.innerHTML = '';
+
+  batchRows.forEach((r, i) => {
+    const tr = document.createElement('tr');
+    if (r.note) tr.classList.add('flagged');
+
+    const tdCheck = document.createElement('td');
+    tdCheck.className = 'col-check';
+    const cb = document.createElement('input');
+    cb.type = 'checkbox';
+    cb.checked = r.selected;
+    cb.setAttribute('aria-label', `Select ${r.symbol}`);
+    cb.onchange = () => {
+      r.selected = cb.checked;
+      updateBatchEstimate();
+    };
+    tdCheck.appendChild(cb);
+    tr.appendChild(tdCheck);
+
+    const cell = (text, cls) => {
+      const td = document.createElement('td');
+      td.textContent = text || '—';
+      if (cls) td.className = cls;
+      return td;
+    };
+    tr.appendChild(cell(r.symbol, 'sym'));
+    tr.appendChild(cell(r.name, 'nm'));
+    tr.appendChild(cell(r.close, 'num'));
+
+    const chg = cell(r.change, 'num');
+    if (/^-/.test(r.change)) chg.classList.add('down');
+    else if (r.change && r.change !== '0%') chg.classList.add('up');
+    tr.appendChild(chg);
+
+    tr.appendChild(cell(r.volume, 'num'));
+
+    const tdNote = document.createElement('td');
+    if (r.note) {
+      const flag = document.createElement('span');
+      flag.className = 'batch-flag';
+      flag.textContent = r.note;
+      tdNote.appendChild(flag);
+    }
+    tr.appendChild(tdNote);
+
+    tr.ondblclick = () => { $('gfInput').value = r.symbol; setGfTarget(r.symbol); };
+    tr.title = `${r.symbol} — double-click to load this one share in the Google Finance window`;
+    tbody.appendChild(tr);
+  });
+
+  updateBatchEstimate();
+}
+
+function updateBatchEstimate() {
+  const n = selectedBatchRows().length;
+  const all = $('batchCheckAll');
+  if (all) {
+    all.checked = n > 0 && n === batchRows.length;
+    all.indeterminate = n > 0 && n < batchRows.length;
+  }
+  const perItemMs = batchState?.avgMs || 70000;
+  const mins = Math.max(1, Math.round((n * perItemMs) / 60000));
+  const est = $('batchEstimate');
+  if (est) {
+    est.textContent = n ? `${n} of ${batchRows.length} picked · about ${mins} min` : 'pick at least one stock';
+  }
+  const label = $('batchRunLabel');
+  if (label) label.textContent = n ? `Analyse ${n} stock${n === 1 ? '' : 's'}` : 'Analyse selected';
+  const btn = $('batchRunBtn');
+  if (btn) btn.disabled = n === 0 || Boolean(batchState?.active);
+}
+
+/** Best call first: verdict, then setup grade, then conviction. */
+const VERDICT_RANK = { STRONG_BUY: 0, TACTICAL_BUY: 1, WAIT_PULLBACK: 2, NEUTRAL: 3, AVOID: 4 };
+const GRADE_RANK = { A_PLUS: 0, A: 1, B: 2, C: 3, D: 4 };
+
+function rankResults(results) {
+  return [...results].sort((a, b) => {
+    if (a.ok !== b.ok) return a.ok ? -1 : 1;
+    const v = (VERDICT_RANK[a.verdict] ?? 9) - (VERDICT_RANK[b.verdict] ?? 9);
+    if (v) return v;
+    const g = (GRADE_RANK[a.grade] ?? 9) - (GRADE_RANK[b.grade] ?? 9);
+    if (g) return g;
+    return (b.conviction || 0) - (a.conviction || 0);
+  });
+}
+
+let batchWasActive = false;
+
+function renderBatch(state) {
+  batchState = state && state.id ? state : null;
+  const prog = $('batchProgress');
+  const results = $('batchResults');
+  const meta = $('batchMeta');
+  if (!prog || !results) return;
+
+  if (!batchState) {
+    prog.hidden = true;
+    if (meta) meta.textContent = 'Load a CSV of symbols';
+    setSingleAnalyseBlocked(false);
+    updateBatchEstimate();
+    return;
+  }
+
+  const { active, total, completed, current, etaMs, status, succeeded, failed } = batchState;
+
+  // One capture browser, one queue: a single-share request during a batch would just sit
+  // behind it and navigate the same tab, so the button is held until the batch is done.
+  setSingleAnalyseBlocked(active);
+  if (batchWasActive && !active) {
+    loadStockHistory();
+    toast(
+      status === 'stopped'
+        ? `Batch stopped — ${succeeded} call${succeeded === 1 ? '' : 's'} on the desk`
+        : `Batch finished — ${succeeded} analysed${failed ? `, ${failed} failed` : ''}`,
+      failed && !succeeded ? 'bad' : 'ok',
+    );
+  }
+  batchWasActive = active;
+
+  prog.hidden = !active;
+  if (active) {
+    $('batchProgNow').textContent = current
+      ? `Analysing ${current.symbol}${current.name ? ` · ${current.name}` : ''}…`
+      : 'Waiting for the capture browser…';
+    $('batchProgCount').textContent = `${completed} / ${total}`;
+    $('batchBarFill').style.width = `${total ? (completed / total) * 100 : 0}%`;
+    $('batchProgEta').textContent = etaMs
+      ? `about ${Math.max(1, Math.round(etaMs / 60000))} min left`
+      : 'estimating…';
+  }
+
+  if (meta) {
+    meta.textContent = active
+      ? `Running · ${completed} of ${total}`
+      : `${status === 'stopped' ? 'Stopped' : 'Finished'} · ${succeeded} analysed${failed ? `, ${failed} failed` : ''}`;
+  }
+
+  renderBatchResults(batchState.results || []);
+  updateBatchEstimate();
+}
+
+function renderBatchResults(list) {
+  const wrap = $('batchResults');
+  const tbody = $('batchResultRows');
+  if (!wrap || !tbody) return;
+
+  if (!list.length) {
+    wrap.hidden = true;
+    return;
+  }
+  wrap.hidden = false;
+
+  const ranked = rankResults(list);
+  const meta = $('batchResultMeta');
+  if (meta) {
+    const buys = ranked.filter((r) => r.ok && (r.verdict === 'STRONG_BUY' || r.verdict === 'TACTICAL_BUY')).length;
+    meta.textContent = `${ranked.length} analysed · ${buys} worth a trade this week`;
+  }
+
+  tbody.innerHTML = '';
+  ranked.forEach((r) => {
+    const tr = document.createElement('tr');
+
+    if (!r.ok) {
+      tr.className = 'failed';
+      const sym = document.createElement('td');
+      sym.className = 'sym';
+      sym.textContent = r.symbol;
+      tr.appendChild(sym);
+      const err = document.createElement('td');
+      err.colSpan = 9;
+      err.className = 'batch-err';
+      err.textContent = r.error || 'Failed';
+      tr.appendChild(err);
+      tbody.appendChild(tr);
+      return;
+    }
+
+    const cell = (text, cls) => {
+      const td = document.createElement('td');
+      td.textContent = text || '—';
+      if (cls) td.className = cls;
+      return td;
+    };
+
+    tr.appendChild(cell(r.symbol, 'sym'));
+
+    const tdVerdict = document.createElement('td');
+    const badge = document.createElement('span');
+    const verdict = (r.verdict || 'NEUTRAL').toUpperCase();
+    badge.className = `gf-verdict-badge ${verdict.toLowerCase().replace(/_/g, '-')}`;
+    badge.textContent = verdict.replace(/_/g, ' ');
+    tdVerdict.appendChild(badge);
+    tr.appendChild(tdVerdict);
+
+    const tdGrade = document.createElement('td');
+    tdGrade.className = 'num';
+    if (r.grade) {
+      const g = document.createElement('span');
+      g.className = `gf-grade-badge g-${r.grade.toLowerCase().replace('_', '-')}`;
+      g.textContent = r.grade.replace('A_PLUS', 'A+');
+      tdGrade.appendChild(g);
+    } else tdGrade.textContent = '—';
+    tr.appendChild(tdGrade);
+
+    tr.appendChild(cell(r.conviction ? `${r.conviction}%` : '—', 'num'));
+    tr.appendChild(cell(r.price, 'num'));
+    tr.appendChild(cell(r.entry));
+    tr.appendChild(cell(r.stop));
+    tr.appendChild(cell(r.target));
+    tr.appendChild(cell(r.rr, 'num'));
+    tr.appendChild(cell(r.quantity, 'num'));
+
+    tr.classList.add('clickable');
+    tr.title = `${r.symbol} — open the full adviser note`;
+    tr.onclick = () => openStockRun(r.id);
+    tbody.appendChild(tr);
+  });
+}
+
+/** Pull one stored run and show it in the report panel above. */
+async function openStockRun(id) {
+  if (!id) return;
+  try {
+    const res = await fetch(`/api/stocks/run/${id}`);
+    if (!res.ok) throw new Error(`HTTP ${res.status}`);
+    selectStockHistoryItem(await res.json());
+  } catch (err) {
+    toast(`Could not open that report: ${err.message}`, 'bad');
+  }
+}
+
+function setSingleAnalyseBlocked(blocked) {
+  const btn = $('gfAnalyseBtn');
+  if (!btn) return;
+  btn.disabled = blocked;
+  btn.title = blocked
+    ? 'A batch is using the capture browser — it will free up when the batch finishes'
+    : 'Ask the swing adviser for a one-week call on this share';
+}
+
+async function startBatch() {
+  const items = selectedBatchRows().map((r) => ({ symbol: r.symbol, name: r.name }));
+  if (!items.length) return;
+
+  const btn = $('batchRunBtn');
+  btn.disabled = true;
+  try {
+    const res = await fetch('/api/stocks/batch', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ items, ...readBrief() }),
+    });
+    const data = await res.json();
+    if (!data.ok) throw new Error(data.error || 'could not start');
+    renderBatch(data.state);
+    toast(`Batch started — ${items.length} symbols queued`, 'ok');
+  } catch (err) {
+    toast(`Batch failed to start: ${err.message}`, 'bad');
+    btn.disabled = false;
+  }
+}
+
+function exportBatchCsv() {
+  const rows = rankResults(batchState?.results || []);
+  if (!rows.length) return;
+  const head = ['Symbol', 'Name', 'Verdict', 'Grade', 'Conviction', 'Price', 'Entry', 'Stop', 'Target 1', 'R:R', 'Qty', 'Summary'];
+  const esc = (v) => `"${String(v ?? '').replace(/"/g, '""')}"`;
+  const body = rows.map((r) => (r.ok
+    ? [r.symbol, r.name, r.verdict, r.grade, r.conviction, r.price, r.entry, r.stop, r.target, r.rr, r.quantity, r.summary]
+    : [r.symbol, r.name, 'FAILED', '', '', '', '', '', '', '', '', r.error]).map(esc).join(','));
+
+  const blob = new Blob([[head.map(esc).join(','), ...body].join('\n')], { type: 'text/csv;charset=utf-8' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `swing-calls-${new Date().toISOString().slice(0, 10)}.csv`;
+  a.click();
+  URL.revokeObjectURL(a.href);
+}
+
+/* batch wiring */
+if ($('batchPanel')) {
+  const drop = $('batchDrop');
+  const fileInput = $('batchFile');
+
+  $('batchBrowse').onclick = () => fileInput.click();
+  drop.onclick = (e) => { if (e.target === drop || e.target.closest('svg')) fileInput.click(); };
+  fileInput.onchange = () => {
+    if (fileInput.files?.[0]) readBatchCsv(fileInput.files[0]);
+    fileInput.value = '';
+  };
+
+  ['dragenter', 'dragover'].forEach((ev) => drop.addEventListener(ev, (e) => {
+    e.preventDefault();
+    drop.classList.add('over');
+  }));
+  ['dragleave', 'drop'].forEach((ev) => drop.addEventListener(ev, (e) => {
+    e.preventDefault();
+    drop.classList.remove('over');
+  }));
+  drop.addEventListener('drop', (e) => {
+    const file = e.dataTransfer?.files?.[0];
+    if (file) readBatchCsv(file);
+  });
+
+  document.querySelectorAll('.batch-quick [data-select]').forEach((b) => {
+    b.onclick = () => selectBatch(b.dataset.select);
+  });
+  $('batchCheckAll').onchange = (e) => selectBatch(e.target.checked ? 'all' : 'none');
+  $('batchRunBtn').onclick = startBatch;
+  $('batchStopBtn').onclick = async () => {
+    $('batchStopBtn').disabled = true;
+    try {
+      const r = await (await fetch('/api/stocks/batch/stop', { method: 'POST' })).json();
+      renderBatch(r.state);
+      toast('Batch will stop after the current symbol', 'ok');
+    } finally {
+      $('batchStopBtn').disabled = false;
+    }
+  };
+  $('batchExportBtn').onclick = exportBatchCsv;
+  $('batchClearBtn').onclick = () => {
+    batchState = null;
+    $('batchResults').hidden = true;
+    $('batchMeta').textContent = 'Load a CSV of symbols';
+  };
+
+  let batchCollapsed = false;
+  $('batchToggle').onclick = () => {
+    batchCollapsed = !batchCollapsed;
+    $('batchPanel').classList.toggle('collapsed', batchCollapsed);
+    $('batchCaret').setAttribute('aria-expanded', String(!batchCollapsed));
+  };
+
+  // Restore a batch that is still running after a refresh.
+  fetch('/api/stocks/batch')
+    .then((r) => r.json())
+    .then((state) => { if (state?.id) renderBatch(state); })
+    .catch(() => {});
+}
 
 /* ---------- Stock Analysis History Logic ---------- */
 let stockHistoryItems = [];

@@ -314,6 +314,125 @@
       </div>
     </section>
 
+    <!-- Batch analysis: a screener CSV in, a ranked shortlist out -->
+    <section class="panel batch-panel" id="batchPanel">
+      <div class="panel-head batch-head" id="batchToggle" title="Collapse or expand batch analysis">
+        <h2>
+          <button class="caret" id="batchCaret" type="button" aria-expanded="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          Batch — screen a whole watchlist
+        </h2>
+        <span class="muted" id="batchMeta">Load a CSV of symbols</span>
+      </div>
+
+      <div class="batch-body" id="batchBody">
+        <!-- 1 · the file -->
+        <div class="batch-drop" id="batchDrop">
+          <input type="file" id="batchFile" accept=".csv,text/csv" hidden />
+          <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M17 8l-5-5-5 5"/><path d="M12 3v12"/></svg>
+          <div class="batch-drop-text">
+            <span class="batch-step">Step 1 · Import</span>
+            <b>Drop a screener CSV here</b> or <button type="button" class="link-btn" id="batchBrowse">choose a file</button>
+            <p class="muted">Any CSV with a symbol column — a screener export like <code>Sr., Stock Name, Symbol, close, %_change, volume</code> is read as-is. Nothing is uploaded; the file is parsed in this browser.</p>
+          </div>
+        </div>
+
+        <!-- 2 · pick what to run -->
+        <div class="batch-pick" id="batchPick" hidden>
+          <div class="batch-pick-head">
+            <div>
+              <span class="batch-step">Step 2 · Pick</span>
+              <b id="batchPickTitle">Choose the stocks to analyse</b>
+            </div>
+            <p class="muted" id="batchPickHint">Every row from your file is listed below. Tick the ones you want a one-week call on — or use a quick pick. Flagged rows (funds, rights, sub-₹5) are rarely swing-tradeable.</p>
+          </div>
+          <div class="batch-toolbar">
+            <div class="batch-file-info">
+              <b id="batchFileName">watchlist.csv</b>
+              <span class="muted" id="batchRowInfo">0 rows</span>
+            </div>
+            <div class="batch-quick">
+              <button type="button" class="chip-btn" data-select="tradeable">Tradeable</button>
+              <button type="button" class="chip-btn" data-select="10">Top 10</button>
+              <button type="button" class="chip-btn" data-select="25">Top 25</button>
+              <button type="button" class="chip-btn" data-select="all">All</button>
+              <button type="button" class="chip-btn" data-select="none">None</button>
+            </div>
+            <div class="batch-run-wrap">
+              <span class="batch-estimate muted" id="batchEstimate"></span>
+              <button type="button" class="btn primary" id="batchRunBtn" disabled>
+                <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3l14 9-14 9V3z"/></svg>
+                <span id="batchRunLabel">Analyse selected</span>
+              </button>
+            </div>
+          </div>
+          <div class="batch-table-wrap">
+            <table class="batch-table" id="batchTable">
+              <thead>
+                <tr>
+                  <th class="col-check"><input type="checkbox" id="batchCheckAll" aria-label="Select all rows" /></th>
+                  <th>Symbol</th>
+                  <th>Name</th>
+                  <th class="num">Close</th>
+                  <th class="num">Change</th>
+                  <th class="num">Volume</th>
+                  <th>Note</th>
+                </tr>
+              </thead>
+              <tbody id="batchRows"></tbody>
+            </table>
+          </div>
+        </div>
+
+        <!-- 3 · progress -->
+        <div class="batch-progress" id="batchProgress" hidden>
+          <div class="batch-prog-head">
+            <span class="batch-prog-now" id="batchProgNow">Starting…</span>
+            <span class="muted" id="batchProgCount">0 / 0</span>
+          </div>
+          <div class="batch-bar"><div class="batch-bar-fill" id="batchBarFill"></div></div>
+          <div class="batch-prog-foot">
+            <span class="muted" id="batchProgEta"></span>
+            <button type="button" class="btn danger-ghost" id="batchStopBtn">Stop after this one</button>
+          </div>
+        </div>
+
+        <!-- 4 · the shortlist -->
+        <div class="batch-results" id="batchResults" hidden>
+          <div class="batch-toolbar">
+            <div class="batch-file-info">
+              <b>Ranked shortlist</b>
+              <span class="muted" id="batchResultMeta"></span>
+            </div>
+            <div class="batch-quick">
+              <button type="button" class="chip-btn" id="batchExportBtn" title="Download these calls as CSV">Export CSV</button>
+              <button type="button" class="chip-btn" id="batchClearBtn" title="Clear the shortlist from this view">Clear</button>
+            </div>
+          </div>
+          <div class="batch-table-wrap">
+            <table class="batch-table results" id="batchResultTable">
+              <thead>
+                <tr>
+                  <th>Symbol</th>
+                  <th>Call</th>
+                  <th class="num">Grade</th>
+                  <th class="num">Conv.</th>
+                  <th class="num">Price</th>
+                  <th>Entry</th>
+                  <th>Stop</th>
+                  <th>Target 1</th>
+                  <th class="num">R:R</th>
+                  <th class="num">Qty</th>
+                </tr>
+              </thead>
+              <tbody id="batchResultRows"></tbody>
+            </table>
+          </div>
+        </div>
+      </div>
+    </section>
+
     <!-- Google Finance Visual Screen Capture Card -->
     <section class="panel gf-shot-panel" id="gfShotCard" hidden>
       <div class="panel-head gf-shot-head" id="gfShotToggle" title="Collapse or expand the Google Finance screen capture">
