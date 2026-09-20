@@ -1,0 +1,19 @@
+{
+  "name": "live-image-analysis",
+  "version": "1.0.0",
+  "description": "Capture Kite NIFTY chart + Sensibull OI every minute and analyse with local Ollama vision model",
+  "main": "src/index.js",
+  "scripts": {
+    "start": "node src/index.js",
+    "export": "node src/export-cli.js"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "dependencies": {
+    "dotenv": "^17.4.2",
+    "express": "^5.2.1",
+    "playwright": "^1.62.1"
+  }
+}
