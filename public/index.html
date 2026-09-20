@@ -19,49 +19,53 @@
       <span class="logo">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 17l5-6 4 4 5-7 4 5"/><path d="M3 21h18"/></svg>
       </span>
-      <div class="brand-text">
-        <h1>Live Market Vision</h1>
-        <p class="sub">Kite NIFTY · Sensibull OI · <span id="modelName" class="mono">gemma</span></p>
-      </div>
+      <h1>Market Vision</h1>
     </div>
 
-    <div class="status-rail" role="status">
-      <div class="pill" id="phasePill" title="Scheduler state"><span class="dot"></span><span id="phaseText">connecting…</span></div>
-      <span class="rail-sep" aria-hidden="true"></span>
-      <div class="pill" id="ollamaPill" title="Local model state"><span class="dot"></span><span id="ollamaText">ollama</span></div>
-      <span class="rail-sep" aria-hidden="true"></span>
-      <div class="pill" id="marketPill" title="NSE trading window"><span class="dot"></span><span id="marketText">market</span></div>
-      <span class="rail-sep" aria-hidden="true"></span>
-      <div class="pill" id="quotePill" title="Live NIFTY 50 spot from the exchange quote API"><span class="dot"></span><span id="quoteText">nifty —</span></div>
-      <span class="rail-sep" aria-hidden="true"></span>
-      <div class="ring" id="ringWrap" title="Time until the next automatic run">
-        <svg viewBox="0 0 44 44"><circle class="ring-bg" cx="22" cy="22" r="19"/><circle id="ringFill" class="ring-fg" cx="22" cy="22" r="19"/></svg>
-        <span id="countdown">--:--</span>
-      </div>
-    </div>
-
-    <div class="actions">
-      <label class="select" title="How often the charts are captured and analysed">
-        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/></svg>
-        <select id="intervalSel" aria-label="Capture interval"></select>
-        <svg class="chev" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
-      </label>
-
-      <button id="windowBtn" class="btn" title="Show or tuck away the capture browser window (shortcut: B)" data-visible="false">
-        <svg class="ico-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.6 12S5.5 5 12 5s10.4 7 10.4 7-3.9 7-10.4 7S1.6 12 1.6 12z"/><circle cx="12" cy="12" r="3"/></svg>
-        <svg class="ico-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.4 10.4 0 0 1 12 19.6C5.5 19.6 1.6 12 1.6 12a19 19 0 0 1 5.2-6.1m3.3-1.3A10.6 10.6 0 0 1 12 4.4c6.5 0 10.4 7.6 10.4 7.6a19.2 19.2 0 0 1-2.5 3.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M2 2l20 20"/></svg>
-        <span id="windowLabel">Show browser</span>
+    <!-- Screen navigation -->
+    <nav class="app-nav" aria-label="Main Navigation">
+      <button type="button" class="nav-tab active" id="tabMarket" data-screen="market" title="Live NIFTY index vision">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 3v18h18"/><path d="M18 17V9"/><path d="M13 17V5"/><path d="M8 17v-3"/></svg>
+        <span>Market</span>
       </button>
+      <button type="button" class="nav-tab" id="tabStocks" data-screen="stocks" title="One-week swing calls on any share">
+        <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+        <span>Stocks</span>
+      </button>
+    </nav>
+
+    <!-- Status: dots first, words only when there is room -->
+    <div class="status-rail" role="status">
+      <div class="pill" id="phasePill" title="Scheduler state"><span class="dot"></span><span class="pill-text" id="phaseText">connecting…</span></div>
+      <div class="pill" id="providerPill" title="AI provider state"><span class="dot"></span><span class="pill-text" id="providerText">provider</span></div>
+      <div class="pill" id="marketPill" title="NSE trading window"><span class="dot"></span><span class="pill-text" id="marketText">market</span></div>
+      <div class="pill pill-quote" id="quotePill" title="Live NIFTY 50 spot from the exchange quote API"><span class="dot"></span><span id="quoteText">nifty —</span></div>
+    </div>
+
+    <div class="top-actions">
+      <div class="ring-wrap" title="Countdown to the next capture">
+        <svg class="ring" viewBox="0 0 36 36">
+          <path class="ring-bg" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+          <path class="ring-fg" id="ringFg" stroke-dasharray="100, 100" d="M18 2.0845 a 15.9155 15.9155 0 0 1 0 31.831 a 15.9155 15.9155 0 0 1 0 -31.831"/>
+        </svg>
+        <span class="ring-label mono" id="ringLabel">—</span>
+      </div>
 
       <button id="runNow" class="btn primary" title="Capture and analyse right now">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4.09 12.97a1 1 0 0 0 .77 1.63H11l-1 7.4 8.91-10.97a1 1 0 0 0-.77-1.63H13z"/></svg>
-        <span>Run now</span>
+        <span class="btn-text">Run now</span>
       </button>
 
-      <button id="pauseBtn" class="btn" title="Pause or resume the schedule">
+      <button id="pauseBtn" class="btn icon" title="Pause or resume the schedule" aria-label="Pause or resume the schedule">
         <svg class="ico-pause" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="6" y="4" width="4" height="16" rx="1"/><rect x="14" y="4" width="4" height="16" rx="1"/></svg>
         <svg class="ico-play" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 4l12 8-12 8z"/></svg>
-        <span id="pauseLabel">Pause</span>
+        <span class="sr-only" id="pauseLabel">Pause</span>
+      </button>
+
+      <button id="windowBtn" class="btn icon" title="Show or tuck away the capture browser window (shortcut: B)" data-visible="false" aria-label="Show or hide the capture browser">
+        <svg class="ico-eye" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.6 12S5.5 5 12 5s10.4 7 10.4 7-3.9 7-10.4 7S1.6 12 1.6 12z"/><circle cx="12" cy="12" r="3"/></svg>
+        <svg class="ico-eye-off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M17.9 17.9A10.4 10.4 0 0 1 12 19.6C5.5 19.6 1.6 12 1.6 12a19 19 0 0 1 5.2-6.1m3.3-1.3A10.6 10.6 0 0 1 12 4.4c6.5 0 10.4 7.6 10.4 7.6a19.2 19.2 0 0 1-2.5 3.6"/><path d="M9.9 9.9a3 3 0 0 0 4.2 4.2"/><path d="M2 2l20 20"/></svg>
+        <span class="sr-only" id="windowLabel">Show browser</span>
       </button>
 
       <div class="menu-wrap" id="moreWrap">
@@ -73,6 +77,11 @@
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
             <span id="snapLabel">Save snapshots</span>
           </button>
+          <button id="themeBtn" class="menu-item" role="menuitem" title="Switch between dark and light theme">
+            <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
+            <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+            <span id="themeLabel">Light theme</span>
+          </button>
           <span class="menu-sep" aria-hidden="true"></span>
           <button id="clearBtn" class="menu-item danger" role="menuitem" title="Delete all stored runs and screenshots">
             <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a1 1 0 0 1 1-1h6a1 1 0 0 1 1 1v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/><path d="M10 11v6M14 11v6"/></svg>
@@ -81,9 +90,8 @@
         </div>
       </div>
 
-      <button id="themeBtn" class="btn icon" title="Switch between dark and light theme" aria-label="Toggle theme">
-        <svg class="ico-moon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/></svg>
-        <svg class="ico-sun" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/></svg>
+      <button id="settingsBtn" class="btn icon" title="Settings" aria-label="Settings">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.65 1.65 0 0 0 .33 1.82l.06.06a2 2 0 0 1 0 2.83 2 2 0 0 1-2.83 0l-.06-.06a1.65 1.65 0 0 0-1.82-.33 1.65 1.65 0 0 0-1 1.51V21a2 2 0 0 1-2 2 2 2 0 0 1-2-2v-.09A1.65 1.65 0 0 0 9 19.4a1.65 1.65 0 0 0-1.82.33l-.06.06a2 2 0 0 1-2.83 0 2 2 0 0 1 0-2.83l.06-.06a1.65 1.65 0 0 0 .33-1.82 1.65 1.65 0 0 0-1.51-1H3a2 2 0 0 1-2-2 2 2 0 0 1 2-2h.09A1.65 1.65 0 0 0 4.6 9a1.65 1.65 0 0 0-.33-1.82l-.06-.06a2 2 0 0 1 0-2.83 2 2 0 0 1 2.83 0l.06.06a1.65 1.65 0 0 0 1.82.33H9a1.65 1.65 0 0 0 1-1.51V3a2 2 0 0 1 2-2 2 2 0 0 1 2 2v.09a1.65 1.65 0 0 0 1 1.51 1.65 1.65 0 0 0 1.82-.33l.06-.06a2 2 0 0 1 2.83 0 2 2 0 0 1 0 2.83l-.06.06a1.65 1.65 0 0 0-.33 1.82V9a1.65 1.65 0 0 0 1.51 1H21a2 2 0 0 1 2 2 2 2 0 0 1-2 2h-.09a1.65 1.65 0 0 0-1.51 1z"/></svg>
       </button>
     </div>
 
@@ -91,6 +99,8 @@
 </header>
 
 <main>
+  <!-- SCREEN 1: MARKET VISION (Live NIFTY / Index Vision) -->
+  <div id="screenMarket" class="screen-view active" role="region" aria-label="Market Vision Dashboard">
   <section class="panel shots-panel" id="shotsPanel">
     <div class="panel-head shots-head" id="shotsToggle" title="Collapse or expand the chart screenshots">
       <h2><button class="caret" id="shotsCaret" type="button" aria-expanded="true">
@@ -207,6 +217,388 @@
     <div class="panel-head"><h2>History</h2><span class="muted" id="histCount"></span></div>
     <div class="history" id="history"></div>
   </section>
+  </div><!-- /screenMarket -->
+
+  <!-- SCREEN 2: STOCKS ANALYSIS (Short-Term Equity & Swing Viability) -->
+  <div id="screenStocks" class="screen-view" role="region" aria-label="Stocks Analysis Dashboard" hidden>
+    <!-- Screen Header -->
+    <div class="screen-header">
+      <div class="screen-header-main">
+        <div class="screen-tag-row">
+          <span class="screen-pill-badge">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+            Equity Hub
+          </span>
+          <span class="screen-tag-sub">Swing Desk · in and out within one week</span>
+        </div>
+        <h2>Stocks Analysis</h2>
+        <p class="screen-desc">A sized one-week call on any share: buy or stand aside, entry trigger, structural stop, share count for your capital, and the date to walk away.</p>
+      </div>
+      <div class="screen-header-stats">
+        <div class="stat-bubble">
+          <span class="muted">Active Focus</span>
+          <b id="stocksHeaderActiveSymbol" class="mono">Market Overview (Beta)</b>
+        </div>
+        <div class="stat-bubble">
+          <span class="muted">Exit By</span>
+          <b id="stocksHeaderExitBy" class="mono">—</b>
+        </div>
+        <div class="stat-bubble">
+          <span class="muted">AI Provider</span>
+          <b id="stocksHeaderAiProvider" class="mono">—</b>
+        </div>
+      </div>
+    </div>
+
+    <!-- Google Finance Automation & Share Research Bar -->
+    <section class="panel gf-bar" id="gfBar" aria-label="Google Finance Financial Analysis">
+      <div class="gf-bar-row">
+        <div class="gf-info">
+          <span class="gf-badge">
+            <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v6l4 2"/></svg>
+            Google Finance
+          </span>
+          <span class="gf-monitored">Monitored: <b id="gfActiveSymbol">Market Overview (Beta)</b></span>
+          <a id="gfExtLink" href="https://www.google.com/finance/beta" target="_blank" rel="noopener noreferrer" class="gf-ext-link" title="Open in Google Finance">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2"><path d="M18 13v6a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h6"/><polyline points="15 3 21 3 21 9"/><line x1="10" y1="14" x2="21" y2="3"/></svg>
+            Open
+          </a>
+        </div>
+        <div class="gf-presets">
+          <span class="gf-presets-label">Quick:</span>
+          <button class="gf-chip" type="button" data-ticker="NIFTY_50:INDEXNSE">NIFTY 50</button>
+          <button class="gf-chip" type="button" data-ticker="RELIANCE:NSE">RELIANCE</button>
+          <button class="gf-chip" type="button" data-ticker="TCS:NSE">TCS</button>
+          <button class="gf-chip" type="button" data-ticker="HDFCBANK:NSE">HDFC BANK</button>
+          <button class="gf-chip" type="button" data-ticker="INFY:NSE">INFOSYS</button>
+          <button class="gf-chip" type="button" data-ticker="TATAMOTORS:NSE">TATA MOTORS</button>
+          <button class="gf-chip" type="button" data-ticker="ICICIBANK:NSE">ICICI BANK</button>
+          <button class="gf-chip" type="button" data-ticker="SBIN:NSE">SBI</button>
+          <button class="gf-chip" type="button" data-ticker="overview">Overview</button>
+        </div>
+      </div>
+      <form class="gf-form" id="gfForm" onsubmit="return false;">
+        <div class="gf-input-wrap">
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+          <input type="text" id="gfInput" class="gf-input" placeholder="Enter share ticker (e.g. RELIANCE:NSE, TATAMOTORS, TCS) or Google Finance URL..." autocomplete="off" />
+        </div>
+        <button type="submit" id="gfLoadBtn" class="btn" title="Load this share in the Google Finance automation window">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6M21.34 15.57a10 10 0 1 1-.57-8.38l5.67-5.67"/></svg>
+          Load Share
+        </button>
+        <button type="button" id="gfAnalyseBtn" class="btn primary" title="Ask the swing adviser for a one-week call on this share">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          Advise Me (One-Week Swing)
+        </button>
+      </form>
+      <div class="gf-brief-row" aria-label="Client brief used for position sizing">
+        <span class="gf-brief-label">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 1v22"/><path d="M17 5H9.5a3.5 3.5 0 0 0 0 7h5a3.5 3.5 0 0 1 0 7H6"/></svg>
+          Your brief
+        </span>
+        <label class="gf-brief-field">
+          <span>Capital</span>
+          <input type="number" id="gfCapital" class="gf-brief-input" min="1000" step="1000" value="100000" />
+        </label>
+        <label class="gf-brief-field">
+          <span>Risk / trade</span>
+          <input type="number" id="gfRiskPct" class="gf-brief-input narrow" min="0.25" max="10" step="0.25" value="2" />
+          <span class="gf-brief-unit">%</span>
+        </label>
+        <label class="gf-brief-field">
+          <span>Max in one position</span>
+          <input type="number" id="gfMaxAlloc" class="gf-brief-input narrow" min="5" max="100" step="5" value="25" />
+          <span class="gf-brief-unit">%</span>
+        </label>
+        <span class="gf-brief-hint" id="gfBriefHint">Risking ₹2,000 per trade · max ₹25,000 in one position</span>
+      </div>
+    </section>
+
+    <!-- Google Finance Visual Screen Capture Card -->
+    <section class="panel gf-shot-panel" id="gfShotCard" hidden>
+      <div class="panel-head gf-shot-head" id="gfShotToggle" title="Collapse or expand the Google Finance screen capture">
+        <h2>
+          <button class="caret" id="gfShotCaret" type="button" aria-expanded="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          Google Finance AI Research Screen
+        </h2>
+        <span class="muted" id="gfShotMeta">AI Research screenshot</span>
+      </div>
+      <div class="gf-shot-body" id="gfShotBody">
+        <div class="gf-shot-img-wrap">
+          <img id="gfShotImg" src="" alt="Google Finance Screen Capture" class="gf-shot-img" />
+        </div>
+      </div>
+    </section>
+
+    <!-- The Adviser's Note (Google Finance Beta → one-week swing call) -->
+    <section class="panel gf-report-panel" id="gfReportPanel">
+      <div class="panel-head gf-report-head" id="gfReportToggle" title="Collapse or expand the adviser's one-week swing note">
+        <h2>
+          <button class="caret" id="gfReportCaret" type="button" aria-expanded="true">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </button>
+          Adviser’s Note — One-Week Swing Call
+        </h2>
+        <span class="muted" id="gfReportMeta"></span>
+      </div>
+      <div class="gf-report-body" id="gfReportBody">
+        <!-- Hero: the call, the grade, the conviction -->
+        <div class="gf-report-hero">
+          <div class="gf-hero-main">
+            <div class="gf-hero-tag-row">
+              <span class="gf-hero-tag" id="gfReportTicker">—</span>
+              <span class="gf-horizon-tag" id="gfReportHorizon">One-week swing</span>
+              <span class="gf-setup-chip" id="gfReportSetup" hidden>—</span>
+            </div>
+            <h3 class="gf-hero-name" id="gfReportName">—</h3>
+            <div class="gf-hero-price-line">
+              <span class="gf-hero-price" id="gfReportPrice">—</span>
+              <span class="delta" id="gfReportDelta"></span>
+            </div>
+          </div>
+
+          <div class="gf-hero-decision">
+            <div class="gf-grade-box">
+              <span class="muted">Setup Grade</span>
+              <span class="gf-grade-badge" id="gfReportGrade">—</span>
+            </div>
+            <div class="gf-verdict-box">
+              <span class="muted">The Call</span>
+              <span class="gf-verdict-badge neutral" id="gfReportVerdict">—</span>
+            </div>
+            <div class="gf-conviction-box">
+              <span class="muted">Conviction</span>
+              <span class="gf-conviction-val" id="gfReportConviction">—</span>
+              <span class="gf-sub-note" id="gfReportDataConf"></span>
+            </div>
+            <div class="gf-health-box">
+              <span class="muted">Financial Health</span>
+              <span class="gf-health-badge neutral" id="gfReportHealth">neutral</span>
+            </div>
+          </div>
+        </div>
+
+        <!-- Why now + what to do -->
+        <div class="gf-verdict-summary">
+          <div class="gf-why-now" id="gfReportWhyNow" hidden></div>
+          <p class="gf-summary-text" id="gfReportVerdictSummary">
+            Pick a share and ask for a call — the adviser answers with an entry, a stop, a size and a walk-away date.
+          </p>
+        </div>
+
+        <!-- The order ticket -->
+        <div class="gf-trade-hud" id="gfTradeHud">
+          <div class="gf-hud-card entry">
+            <div class="gf-hud-label">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="6"/><circle cx="12" cy="12" r="2"/></svg>
+              Entry Zone
+            </div>
+            <div class="gf-hud-val" id="gfReportEntry">—</div>
+            <div class="gf-hud-sub" id="gfReportEntryTrigger">Buy only on the trigger</div>
+          </div>
+
+          <div class="gf-hud-card stop">
+            <div class="gf-hud-label">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+              Stop Loss
+            </div>
+            <div class="gf-hud-val" id="gfReportSL">—</div>
+            <div class="gf-hud-sub" id="gfReportRiskPerShare">Structural invalidation</div>
+          </div>
+
+          <div class="gf-hud-card target">
+            <div class="gf-hud-label">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 6 13.5 15.5 8.5 10.5 1 18"/><polyline points="17 6 23 6 23 12"/></svg>
+              Targets (T1 / T2)
+            </div>
+            <div class="gf-hud-val" id="gfReportTargets">—</div>
+            <div class="gf-hud-sub" id="gfReportExpMove">Book inside the week</div>
+          </div>
+
+          <div class="gf-hud-card rr">
+            <div class="gf-hud-label">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M8 12h8"/><path d="M12 8v8"/></svg>
+              Risk : Reward
+            </div>
+            <div class="gf-hud-val" id="gfReportRR">—</div>
+            <div class="gf-hud-sub">Per rupee risked</div>
+          </div>
+
+          <div class="gf-hud-card size">
+            <div class="gf-hud-label">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><path d="M3 9h18"/><path d="M9 21V9"/></svg>
+              Position Size
+            </div>
+            <div class="gf-hud-val" id="gfReportQty">—</div>
+            <div class="gf-hud-sub" id="gfReportCapitalDeployed">For your stated capital</div>
+          </div>
+
+          <div class="gf-hud-card timestop">
+            <div class="gf-hud-label">
+              <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+              Time Stop
+            </div>
+            <div class="gf-hud-val small" id="gfReportTimeStop">—</div>
+            <div class="gf-hud-sub">Walk away if it hasn’t moved</div>
+          </div>
+        </div>
+
+        <!-- Key fundamentals strip -->
+        <div class="gf-metrics-grid">
+          <div class="kv"><span class="muted">Market Cap</span><b id="gfReportMktCap">—</b></div>
+          <div class="kv"><span class="muted">P/E Ratio</span><b id="gfReportPE">—</b></div>
+          <div class="kv"><span class="muted">52-Wk Range</span><b id="gfReport52W">—</b></div>
+          <div class="kv"><span class="muted">Dividend Yield</span><b id="gfReportDiv">—</b></div>
+          <div class="kv"><span class="muted">Day Range</span><b id="gfReportDayRange">—</b></div>
+        </div>
+
+        <div class="grid gf-report-cards">
+          <!-- Scorecard -->
+          <div class="card gf-scorecard-card">
+            <div class="card-head-row">
+              <h3>Setup Scorecard</h3>
+              <span class="muted" id="gfScoreTotal">—</span>
+            </div>
+            <div class="gf-score-grid" id="gfReportScorecard"></div>
+          </div>
+
+          <!-- Execution playbook -->
+          <div class="card">
+            <h3>Execution Playbook</h3>
+            <div class="gf-playbook">
+              <div class="gf-pb-row">
+                <span class="muted">Entry trigger</span>
+                <p id="gfReportTrigger">—</p>
+              </div>
+              <div class="gf-pb-row">
+                <span class="muted">Managing &amp; booking</span>
+                <p id="gfReportExitPlan">—</p>
+              </div>
+              <div class="gf-pb-row">
+                <span class="muted">Sizing &amp; risk budget</span>
+                <p id="gfReportSizingNote">—</p>
+              </div>
+              <div class="gf-pb-row danger">
+                <span class="muted">Invalidation — get out</span>
+                <p id="gfReportInvalidation">—</p>
+              </div>
+            </div>
+          </div>
+
+          <!-- Technical momentum -->
+          <div class="card span2">
+            <h3>Technical Momentum &amp; Key Levels</h3>
+            <div class="gf-tech-grid">
+              <div class="gf-tech-item">
+                <span class="muted">Trend Structure</span>
+                <p id="gfReportTrend" class="gf-tech-desc">—</p>
+              </div>
+              <div class="gf-tech-item">
+                <span class="muted">Momentum Read</span>
+                <p id="gfReportMomentum" class="gf-tech-desc">—</p>
+              </div>
+              <div class="gf-tech-item">
+                <span class="muted">Volume &amp; Liquidity</span>
+                <p id="gfReportVolume" class="gf-tech-desc">—</p>
+              </div>
+              <div class="gf-tech-item">
+                <span class="muted">52-Week High Proximity</span>
+                <p id="gfReport52wProx" class="gf-tech-desc">—</p>
+              </div>
+              <div class="gf-tech-item">
+                <span class="muted">Daily Volatility</span>
+                <p id="gfReportVolatility" class="gf-tech-desc">—</p>
+              </div>
+              <div class="gf-tech-item">
+                <span class="muted">Nearest Support</span>
+                <b id="gfReportKeySupport" class="mono">—</b>
+              </div>
+              <div class="gf-tech-item">
+                <span class="muted">Nearest Resistance</span>
+                <b id="gfReportKeyResist" class="mono">—</b>
+              </div>
+            </div>
+          </div>
+
+          <!-- The two sides of the trade -->
+          <div class="card gf-case-card bull">
+            <h3>Bull Case (this week)</h3>
+            <p id="gfReportBull" class="gf-case-text">—</p>
+          </div>
+          <div class="card gf-case-card bear">
+            <h3>Bear Case (this week)</h3>
+            <p id="gfReportBear" class="gf-case-text">—</p>
+          </div>
+
+          <!-- Catalysts vs risks -->
+          <div class="card">
+            <h3>Catalysts Inside the Week</h3>
+            <ul id="gfReportCatalysts" class="lvl up"></ul>
+          </div>
+          <div class="card">
+            <h3>What Can Go Wrong</h3>
+            <ul id="gfReportRisks" class="lvl down"></ul>
+          </div>
+
+          <!-- Google Finance AI Research -->
+          <div class="card span2 gf-ai-research-card">
+            <div class="card-head-row">
+              <span class="gf-spark-badge">
+                <svg viewBox="0 0 24 24" width="14" height="14" fill="currentColor"><path d="M12 2L14.5 9.5L22 12L14.5 14.5L12 22L9.5 14.5L2 12L9.5 9.5L12 2Z"/></svg>
+                Google Finance Beta AI Research Tool
+              </span>
+              <span class="muted">Right-Side Panel Synthesis</span>
+            </div>
+            <ul id="gfReportAiInsights" class="gf-research-list"></ul>
+          </div>
+
+          <!-- Valuation & highlights -->
+          <div class="card">
+            <h3>Valuation &amp; Fundamental Outlook</h3>
+            <p id="gfReportValuation">—</p>
+          </div>
+          <div class="card">
+            <h3>Financial Performance Highlights</h3>
+            <ul id="gfReportHighlights" class="lvl up"></ul>
+          </div>
+
+          <!-- The note -->
+          <div class="card span2">
+            <h3>Your Adviser’s Note</h3>
+            <p id="gfReportTakeaway" class="gf-takeaway-text">—</p>
+          </div>
+
+          <!-- What the screen could not tell us -->
+          <div class="card span2 gf-gaps-card" id="gfDataGapsCard" hidden>
+            <h3>Read With Care — Not Visible On The Screen</h3>
+            <ul id="gfReportDataGaps" class="gf-gaps-list"></ul>
+          </div>
+        </div>
+      </div>
+    </section>
+
+    <!-- Stock Analysis History Section -->
+    <section class="panel stocks-history-panel" id="stocksHistoryPanel">
+      <div class="panel-head stocks-hist-head">
+        <h2>
+          <svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>
+          Stock Analysis History
+        </h2>
+        <div class="stocks-hist-actions">
+          <span class="muted" id="stocksHistCount">0 analyses</span>
+          <button type="button" class="btn icon-text danger-ghost" id="clearStocksHistBtn" title="Clear all stock analysis history" style="display: none;">
+            <svg viewBox="0 0 24 24" width="13" height="13" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/></svg>
+            Clear all
+          </button>
+        </div>
+      </div>
+      <div class="stocks-history" id="stocksHistory">
+        <!-- Populated dynamically -->
+      </div>
+    </section>
+  </div>
 </main>
 
 <footer class="foot">Technical study tool — not investment advice. Images and analysis stay on this machine.</footer>
@@ -224,6 +616,124 @@
       <button class="btn" id="clearCancel">Cancel</button>
       <button class="btn danger solid" id="clearConfirm">Yes, clear everything</button>
     </div>
+  </div>
+</div>
+
+<div class="modal" id="settingsModal" hidden>
+  <div class="modal-card settings-card" role="dialog" aria-modal="true" aria-labelledby="settingsTitle">
+    <header class="settings-head">
+      <div>
+        <h3 id="settingsTitle">Settings</h3>
+        <p class="settings-sub">Capture cadence, AI provider and appearance. Changes apply immediately.</p>
+      </div>
+      <button class="btn icon close-btn" id="settingsClose" aria-label="Close settings" title="Close (Esc)">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+      </button>
+    </header>
+
+    <div class="settings-body">
+      <section class="setting-group">
+        <h4>Capture</h4>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Interval</span>
+            <span class="setting-desc">How often the charts are captured and analysed during market hours.</span>
+          </div>
+          <div class="select-wrap">
+            <select id="settingsIntervalSelect" class="select" aria-label="Capture interval">
+              <option value="1">1 min</option>
+              <option value="2">2 min</option>
+              <option value="5">5 min</option>
+              <option value="10">10 min</option>
+              <option value="15">15 min</option>
+            </select>
+            <svg class="select-arr" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M6 9l6 6 6-6"/></svg>
+          </div>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Kite backup chart</span>
+            <span class="setting-desc">Capture the Zerodha Kite chart as a fallback when Fyers is unavailable.</span>
+          </div>
+          <button type="button" class="switch" id="kiteToggleBtn" role="switch" aria-checked="true" aria-label="Kite backup chart">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-state" id="kiteTogglePill">ON</span>
+          </button>
+        </div>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Google Finance on every cycle</span>
+            <span class="setting-desc">Adds a Google Finance capture to routine runs. The Stocks screen works on demand regardless.</span>
+          </div>
+          <button type="button" class="switch" id="gfToggleBtn" role="switch" aria-checked="false" aria-label="Google Finance on every cycle">
+            <span class="switch-track"><span class="switch-thumb"></span></span>
+            <span class="switch-state" id="gfTogglePill">OFF</span>
+          </button>
+        </div>
+      </section>
+
+      <section class="setting-group">
+        <h4>AI provider</h4>
+
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Active provider</span>
+            <span class="setting-desc" id="settingsProviderDesc">Model: <span id="modelName" class="mono">gemma</span></span>
+          </div>
+          <div class="segment-control" id="providerSegment" role="tablist" aria-label="AI provider">
+            <button class="segment" data-value="ollama" role="tab">Ollama</button>
+            <button class="segment" data-value="gemini" role="tab">Gemini</button>
+          </div>
+        </div>
+
+        <div class="setting-row stacked" id="geminiKeyRow" hidden>
+          <div class="setting-info">
+            <span class="setting-label">Gemini API key</span>
+            <span class="setting-desc" id="geminiKeyState">Held in memory for this session only — add it to <code>.env</code> to persist it.</span>
+          </div>
+          <div class="api-key-wrap">
+            <input type="password" id="geminiKeyInput" class="api-key-input" placeholder="AIzaSy…" autocomplete="off" spellcheck="false" />
+            <button class="btn icon" id="geminiKeyReveal" type="button" title="Show or hide the key" aria-label="Show or hide the key">
+              <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M1.6 12S5.5 5 12 5s10.4 7 10.4 7-3.9 7-10.4 7S1.6 12 1.6 12z"/><circle cx="12" cy="12" r="3"/></svg>
+            </button>
+            <button class="btn primary" id="saveGeminiKeyBtn" type="button">Apply</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="setting-group">
+        <h4>Appearance</h4>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Theme</span>
+            <span class="setting-desc">Remembered in this browser.</span>
+          </div>
+          <div class="segment-control" id="themeSegment" role="tablist" aria-label="Theme">
+            <button class="segment" data-value="dark" role="tab">Dark</button>
+            <button class="segment" data-value="light" role="tab">Light</button>
+          </div>
+        </div>
+      </section>
+
+      <section class="setting-group danger-group">
+        <h4>Data</h4>
+        <div class="setting-row">
+          <div class="setting-info">
+            <span class="setting-label">Clear stored data</span>
+            <span class="setting-desc">Deletes every stored run and captured screenshot from this machine. Cannot be undone.</span>
+          </div>
+          <button class="btn danger-ghost" id="settingsClearBtn" type="button">Clear data…</button>
+        </div>
+      </section>
+    </div>
+
+    <footer class="settings-foot">
+      <span class="mono" id="settingsFootMeta">—</span>
+      <span>Technical study tool — not investment advice.</span>
+    </footer>
   </div>
 </div>
 

@@ -29,17 +29,20 @@ Then open **http://localhost:4321**.
 
 ## First run — logging in
 
-A Chromium window opens with two tabs. Both sites need a session:
+A Chromium window opens with tabs for the targets. The sites need a session:
 
 | Tab | Why |
 | --- | --- |
-| Kite | The chart URL requires a logged-in Kite session |
+| Fyers | Main source for NIFTY 50 chart |
+| Kite | Backup source for NIFTY 50 chart |
 | Sensibull | Index (NIFTY) option-chain data requires a broker login |
+| Google Finance | Financial analysis, key metrics (P/E, Market Cap), quarterly trends & news for any share |
 
 Log in **manually in that window**. The session is stored in `data/browser-profile/` and reused
 on every later start, so you only do this once (until the broker expires the session).
 
-While a login screen is detected the app still captures screenshots but **skips the model call**
+If Fyers requires a login or is unavailable, the app automatically falls back to Kite for the NIFTY 50 chart analysis.
+While a login screen is detected on active targets, the app captures screenshots but **skips the model call**
 (the dashboard shows a `login needed` badge). As soon as you're logged in it re-navigates to the
 target views automatically and resumes analysis on the next cycle.
 
@@ -49,11 +52,10 @@ intermittent "Oops! Something went wrong" page by clicking Retry.
 
 ## Dashboard
 
-- Both live screenshots side by side (click to zoom), with per-tab **Reload** buttons
-- **Collapse/expand** either screenshot panel by clicking its title or caret. A collapsed panel
-  shrinks to a slim header bar and gives its space to the other chart, which expands to full
-  width. The choice is remembered in `localStorage`, so it survives the per-minute refresh and
-  page reloads.
+- All live screenshots side by side (click to zoom), with per-tab **Reload** buttons
+- **Google Finance research & financial analysis bar** — steer the Google Finance automation window to any specific share (e.g. `RELIANCE:NSE`, `TCS`, `INFY`, `HDFCBANK`, or custom Google Finance URL) with one-click quick presets.
+- **Adviser's note — one-week swing call** (Stocks screen) — see [One-week swing adviser](#one-week-swing-adviser).
+- **Collapse/expand** screenshot panels by clicking titles or carets. The choice is remembered in `localStorage`.
 - **Decision snapshot** — the call (`Go long` / `Go short` / `Wait` / `Exit` / `Stand aside`)
   with a one-line actionable instruction, conviction and chart-confidence meters, spot with the
   day's move, bias, momentum, key level, expected range and day range
@@ -64,17 +66,28 @@ intermittent "Oops! Something went wrong" page by clicking Retry.
 - Combined view, price action, OI read, supports, resistances, watch-for, risks
 - **History** rows showing time, action, bias and the 5-minute move
 - Countdown ring to the next capture, **Run now**, **Pause/Resume**
-- **Interval dropdown** — switch the capture cadence between **1, 2, 5, 10 and 15 minutes**
-  without restarting. The next run is immediately re-aligned to the new wall-clock boundary
-  (e.g. 15 min fires at :00, :15, :30, :45). Resets to `INTERVAL_SECONDS` on restart.
-- **Clear data** wipes every stored run and all captured screenshots from disk (asks for
-  confirmation first, since it cannot be undone)
-- **Save snapshots** captures a fixed set of four charts and writes them straight to your
+- **Save snapshots** (⋯ menu) captures configured charts and writes them straight to your
   Downloads folder — see [Snapshot button](#snapshot-button)
-- **Theme toggle** switches between the dark and light palettes; the choice is remembered in
-  `localStorage`
+- **Clear data** (⋯ menu or Settings → Data) wipes every stored run and all captured
+  screenshots from disk, after a confirmation — it cannot be undone
 - Scrollable history — click any row to pin that run; press <kbd>Esc</kbd> to go back to live
 - Raw model JSON in a collapsible panel
+
+### Topbar and settings
+
+The topbar carries only what you act on: the screen tabs, a quiet status strip (scheduler,
+provider, market window, live NIFTY), the countdown ring, **Run now**, **Pause**, **Show/hide
+browser**, a ⋯ menu for one-off actions, and **Settings**. As the window narrows the status words
+drop before the dots do, then the button labels, so the row never wraps onto the brand.
+
+Everything persistent lives in **Settings** (gear icon, <kbd>Esc</kbd> to close):
+
+| Section | Controls |
+| --- | --- |
+| Capture | Interval (**1, 2, 5, 10, 15 min**, re-aligned to the wall-clock boundary immediately; resets to `INTERVAL_SECONDS` on restart), Kite backup chart, Google Finance on every cycle |
+| AI provider | Ollama / Gemini, the model in use, and the Gemini API key (held for the session — put it in `.env` to persist it) |
+| Appearance | Dark / light theme, remembered in `localStorage` |
+| Data | Clear stored data |
 
 ## Configuration (`.env`)
 
@@ -100,6 +113,14 @@ intermittent "Oops! Something went wrong" page by clicking Retry.
 | `SETTLE_MS` | `4000` | Wait after navigation before capturing |
 | `KITE_INTERVAL` | `1` | Candle interval (TradingView value; `1` = 1 minute). Empty = leave as-is |
 | `KITE_RANGE` | `1d` | Bottom date-range tab: `1d`, `5d`, `1m`, `3m`, `6m`, `1yr`, `5yr`, `All`. Empty = leave as-is |
+| `KITE_ENABLED` | `true` | Enable or disable backup Kite chart capture |
+| `GOOGLE_FINANCE_ENABLED` | `true` | Enable or disable Google Finance capture & financial analysis |
+| `GOOGLE_FINANCE_URL` | `https://www.google.com/finance/beta` | Target Google Finance URL or stock quote view |
+| `GOOGLE_FINANCE_RESEARCH_WAIT_MS` | `12000` | How long the Google Finance AI Research panel is given to finish streaming its answer before the screenshot is taken |
+| `ADVISOR_CAPITAL` | `100000` | Capital the swing adviser sizes positions against (seeds the dashboard's brief fields) |
+| `ADVISOR_RISK_PCT` | `2` | Maximum % of capital risked on one trade (entry → stop) |
+| `ADVISOR_MAX_ALLOC_PCT` | `25` | Maximum % of capital in a single position |
+| `ADVISOR_SESSIONS` | `5` | Trading sessions the swing may live for — `5` is "inside one week" |
 | `RELOAD_EVERY_CYCLES` | `0` | Hard-reload both pages every N cycles (`0` = never) |
 | `HISTORY_LIMIT` | `200` | Runs kept in memory / served to the UI |
 | `RETAIN_SHOTS` | `400` | PNGs kept on disk before pruning |
@@ -115,7 +136,7 @@ intermittent "Oops! Something went wrong" page by clicking Retry.
 
 | Route | Purpose |
 | --- | --- |
-| `GET /api/status` | Scheduler, Ollama and per-tab login state |
+| `GET /api/status` | Scheduler, Ollama, Google Finance and per-tab login state |
 | `GET /api/latest` | Most recent run |
 | `GET /api/quote` | Live NIFTY 50 spot from the exchange quote API (`?force=1` bypasses the cache) |
 | `GET /api/trend` | Live session memory: 1/5/10/15/30-min and whole-day windows |
@@ -130,10 +151,14 @@ intermittent "Oops! Something went wrong" page by clicking Retry.
 | `GET /exports/*` | The export folder, served as static files |
 | `GET /api/events` | SSE stream (`status`, `run`, `error-event`, `analysis-start`, `analysis-token`, `analysis-end`) |
 | `POST /api/run-now` | Trigger a capture + analysis immediately |
-| `POST /api/snapshots` | Capture the four snapshot views and save them to `DOWNLOADS_DIR` |
+| `POST /api/snapshots` | Capture the configured snapshot views and save them to `DOWNLOADS_DIR` |
 | `POST /api/pause` / `POST /api/resume` | Control the loop |
 | `POST /api/interval` | Set the cadence live — body `{ "minutes": 1 \| 2 \| 5 \| 10 \| 15 }` |
-| `POST /api/reload/:id` | Re-navigate `kite` or `sensibull` |
+| `POST /api/reload/:id` | Re-navigate target tab (`fyers`, `kite`, `sensibull`, `googlefinance`) |
+| `POST /api/kite-toggle` | Turn Kite backup capture on or off |
+| `POST /api/google-finance/toggle` | Turn Google Finance capture on or off |
+| `POST /api/google-finance/target` | Navigate Google Finance window to a share or URL — body `{ "query": "RELIANCE:NSE" }` |
+| `POST /api/google-finance/analyse` | Capture the Google Finance AI Research screen and return a sized one-week swing call — body `{ "query": "TATAMOTORS:NSE", "capital": 250000, "riskPct": 1.5, "maxAllocPct": 30 }` (all optional) |
 | `POST /api/window/show` / `POST /api/window/hide` | Bring the capture browser window back, or tuck it away |
 | `POST /api/ollama/unload` | Drop the model from memory immediately |
 | `GET /api/dom/:id?selector=&mode=controls` | Read-only DOM inspector for tuning selectors |
@@ -236,6 +261,9 @@ defined in `config.snapshots` in `src/config.js` if you want to add or change an
 src/config.js      configuration + capture targets
 src/capture.js     Playwright persistent browser, per-site login/recovery hooks
 src/ollama.js      vision prompt, JSON schema, Ollama call
+src/gemini.js      the same two calls against the Gemini API
+src/ai.js          picks the provider from AI_PROVIDER
+src/swing.js       one-week swing adviser: prompt, trading window, response schema
 src/quote.js       live NIFTY 50 spot (NSE → Yahoo) + spot cross-check
 src/scheduler.js   the every-minute loop
 src/store.js       JSONL run history + screenshot pruning
@@ -282,6 +310,45 @@ reading was *verified* against the feed or *corrected* by it. A failed lookup ne
 the last good quote is reused for `QUOTE_MAX_STALE_SECONDS`, after which the model falls back to
 reading the chart and is told it is on its own.
 
+## One-week swing adviser
+
+The **Stocks Analysis** screen answers one question: *should I put money into this share for the
+next few days?* It is not a research dump — it is the note an adviser would hand you before the
+open, and every part of it is built around a trade that is **opened and closed inside one trading
+week**.
+
+Pick a share (quick chip, a ticker like `TATAMOTORS:NSE`, or a Google Finance URL), set **your
+brief** — capital, risk per trade, maximum share of capital in one position — and press **Advise
+Me**. The app then:
+
+1. drives the Google Finance Beta window to that share and asks its **AI Research** panel a
+   one-week swing question (trend, levels with numbers, volume, events landing this week, risks);
+2. screenshots the whole screen once the panel has answered, and reads the panel's text out of the
+   DOM as well, so the model gets the numbers as text rather than only as pixels;
+3. sends both, plus your brief and the real dates of the next five NSE sessions, to the model.
+
+What comes back:
+
+| Block | What it is for |
+| --- | --- |
+| **The call** | `STRONG_BUY` / `TACTICAL_BUY` / `WAIT_PULLBACK` / `NEUTRAL` / `AVOID`, with a setup **grade** (A+ → D) and the setup type actually being traded |
+| **Why now** | One line on why *this* week — the trigger, level or event that makes the timing specific |
+| **Order ticket** | Entry zone and the trigger that fires it, a structural stop, T1/T2, risk:reward, **how many shares** your capital and risk budget allow, and the **time stop** — the dated session you exit on if nothing happens |
+| **Setup scorecard** | Trend, momentum, volume/liquidity, catalyst, risk:reward and valuation scored 0-10, so a weak leg is visible instead of buried |
+| **Execution playbook** | Where the first tranche is booked, when the stop moves to cost, how the rest trails, and what invalidates the whole read |
+| **Bull / bear case** | The strongest argument on each side *for this week*, not for the year |
+| **Read with care** | Every number the model wanted but could not see on the screen — the reason conviction is where it is |
+
+Position sizing is arithmetic, not vibes: `risk per share = entry − stop`, `quantity = risk budget ÷
+risk per share`, capped by the position limit, and the card says which of the two limits bound the
+size. Set the brief to your real numbers and the share count is directly usable.
+
+The adviser is told to refuse rather than invent: no identifiable setup, an index, or an unreadable
+screen all produce `NEUTRAL`/`AVOID` with low conviction and a plain "do nothing this week".
+
+Calls are kept in **Stock Analysis History** with their verdict, grade, conviction and screenshot;
+clicking one replays the full note.
+
 ## Disclaimer
 
 Technical study tool. The model reads pixels off a screenshot and can misread numbers — spot is
@@ -300,8 +367,8 @@ one that isn't in the foreground. Nothing ever steals focus, so you can keep wor
 
 - The window tucks itself automatically on startup and after every clean cycle.
 - If either site needs a login, the window **pops back out on its own** so you can sign in.
-- The **Show browser / Hide browser** button sits directly in the dashboard topbar (no menu),
-  and **`B`** toggles it from anywhere on the page. Choosing "Show" pins it visible until you
+- The **Show browser / Hide browser** control is the eye icon in the dashboard topbar, and
+  **`B`** toggles it from anywhere on the page. Choosing "Show" pins it visible until you
   hide it again.
 - Set `TUCK_WINDOW=false` to disable and keep a normal window.
 

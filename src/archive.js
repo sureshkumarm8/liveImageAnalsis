@@ -141,7 +141,7 @@ export class Archive {
       exportedAt: new Date().toISOString(),
       source: {
         app: 'liveImageAnalsis',
-        model: config.ollama.model,
+        model: config[config.provider].model,
         intervalSeconds: config.intervalMs / 1000,
         market: `${config.market.open}-${config.market.close} ${config.market.tz}`,
       },
@@ -273,7 +273,7 @@ export class Archive {
     const manifest = {
       schema: SCHEMA,
       generatedAt: new Date().toISOString(),
-      model: config.ollama.model,
+      model: config[config.provider].model,
       latestRunId: newest?.latestRunId || null,
       latestRunAt: newest?.lastRunAt || null,
       days: sorted,

@@ -124,6 +124,26 @@ async function applyKiteView(page, { interval, range, months }) {
  * what we asked for, and how to steer it back if it drifted.
  */
 const HOOKS = {
+  fyers: {
+    async awaitingLogin(page) {
+      const url = page.url();
+      if (/\/login/i.test(url) || /auth\.fyers/i.test(url) || /myaccount\.fyers/i.test(url)) return true;
+      return (
+        (await vis(page.getByText('Login to Fyers', { exact: false }))) ||
+        (await vis(page.getByText('Sign In', { exact: false }))) ||
+        (await vis(page.getByText('User ID', { exact: false }))) ||
+        (await vis(page.getByText('Client ID', { exact: false })))
+      );
+    },
+    onTarget(page) {
+      return /fyers\.in/i.test(decodeURIComponent(page.url())) || /fyers/i.test(page.url());
+    },
+    async ensure(page) {
+      // Best-effort check if page is healthy
+    },
+    captureSelector: '#chart_container, .chart-container, iframe',
+  },
+
   kite: {
     async awaitingLogin(page) {
       const url = page.url();
@@ -180,6 +200,55 @@ const HOOKS = {
     },
     captureSelector: '.chart-and-chart-inputs',
   },
+
+  googlefinance: {
+    async awaitingLogin(page) {
+      const url = page.url();
+      if (/accounts\.google\.com\/ServiceLogin/i.test(url) && !url.includes('continue=')) return true;
+      return false;
+    },
+    onTarget(page) {
+      return /google\.[a-z.]+\/finance/i.test(page.url());
+    },
+    async ensure(page) {
+      try {
+        const consentButtons = page.locator(
+          'button:has-text("Accept all"), button:has-text("I agree"), button:has-text("Stay signed out")',
+        );
+        if (await consentButtons.first().isVisible({ timeout: 1200 }).catch(() => false)) {
+          await consentButtons.first().click().catch(() => {});
+          await sleep(1000);
+        }
+
+        // Ensure right-side AI Research panel is expanded/active
+        const panelOpen = await page.evaluate(() => {
+          const sel = document.querySelector('aside, [role="complementary"], [aria-label*="Research" i], [data-panel*="research" i]');
+          return !!(sel && sel.getBoundingClientRect().width > 150);
+        }).catch(() => false);
+
+        if (!panelOpen) {
+          const toggleSelectors = [
+            'button[aria-label*="Research" i]',
+            'button:has-text("Research")',
+            '[role="tab"]:has-text("Research")',
+            'button[aria-label*="side panel" i]',
+            'button[aria-label*="Ask" i]',
+            '[title*="Research" i]',
+            'button[aria-label*="Show side panel" i]'
+          ];
+          for (const sel of toggleSelectors) {
+            const btn = page.locator(sel).first();
+            if (await btn.isVisible({ timeout: 800 }).catch(() => false)) {
+              await btn.click().catch(() => {});
+              await sleep(1200);
+              break;
+            }
+          }
+        }
+      } catch {}
+    },
+    captureSelector: null,
+  },
 };
 
 const noop = {
@@ -202,6 +271,10 @@ export class Capture {
     // Set when the user explicitly asks for the window via the dashboard, which
     // suppresses the automatic re-tuck on the next cycle.
     this.pinnedVisible = false;
+    this.kiteEnabled = config.browser.kiteEnabled;
+    this.googleFinanceEnabled = config.browser.googleFinanceEnabled;
+    this.googleFinanceUrl = config.browser.googleFinanceUrl;
+    this.googleFinanceSymbol = 'Overview';
     // Serialises everything that drives the shared pages, so a scheduled run and a
     // manual snapshot set can never fight over the chart's interval/range.
     this.queue = Promise.resolve();
@@ -238,9 +311,17 @@ export class Capture {
     this.context.setDefaultNavigationTimeout(config.browser.navTimeoutMs);
 
     const existing = this.context.pages();
+    let pageIdx = 0;
     for (let i = 0; i < config.targets.length; i += 1) {
       const target = config.targets[i];
-      const blank = existing[i] && existing[i].url() === 'about:blank' ? existing[i] : await this.context.newPage();
+      if (target.id === 'googlefinance' && !this.googleFinanceEnabled) {
+        continue;
+      }
+      const blank =
+        existing[pageIdx] && existing[pageIdx].url() === 'about:blank'
+          ? existing[pageIdx]
+          : await this.context.newPage();
+      pageIdx += 1;
       this.pages.set(target.id, blank);
       await this.navigate(target.id);
     }
@@ -250,8 +331,11 @@ export class Capture {
     }
 
     await this.initWindowControl();
-    // Get out of the way immediately unless a manual login is already required.
-    const needsLogin = (await Promise.all(config.targets.map((t) => this.loginState(t.id)))).some(Boolean);
+    // Get out of the way immediately unless a primary (non-backup) target requires manual login.
+    const primaryTargets = config.targets.filter(
+      (t) => !t.isBackup && (t.id !== 'googlefinance' || this.googleFinanceEnabled),
+    );
+    const needsLogin = (await Promise.all(primaryTargets.map((t) => this.loginState(t.id)))).some(Boolean);
     if (!needsLogin) await this.setTucked(true);
   }
 
@@ -315,6 +399,50 @@ export class Capture {
   async hideWindow() {
     this.pinnedVisible = false;
     return this.setTucked(true);
+  }
+
+  /**
+   * Steer Google Finance tab to a specific share, ticker, or custom URL.
+   * e.g. "RELIANCE:NSE", "TCS", "INFY:NSE", "NIFTY", or a full Google Finance URL.
+   */
+  async setGoogleFinanceTarget(queryOrUrl) {
+    let url = (queryOrUrl || '').trim();
+    let symbol = '';
+    if (!url || url.toLowerCase() === 'beta' || url.toLowerCase() === 'home' || url.toLowerCase() === 'overview') {
+      url = 'https://www.google.com/finance/beta';
+      symbol = 'Market Overview';
+    } else if (/^https?:\/\//i.test(url)) {
+      const m = url.match(/\/quote\/([^/?#]+)/);
+      symbol = m ? decodeURIComponent(m[1]) : 'Custom';
+    } else {
+      let ticker = url.toUpperCase();
+      if (ticker === 'NIFTY' || ticker === 'NIFTY 50' || ticker === 'NIFTY50') {
+        ticker = 'NIFTY_50:INDEXNSE';
+      } else if (!ticker.includes(':')) {
+        ticker = `${ticker}:NSE`;
+      }
+      url = `https://www.google.com/finance/quote/${ticker}`;
+      symbol = ticker;
+    }
+
+    this.googleFinanceUrl = url;
+    this.googleFinanceSymbol = symbol;
+
+    const target = this.target('googlefinance');
+    if (target) {
+      target.url = url;
+      target.label = symbol ? `Google Finance — ${symbol}` : 'Google Finance — Financial Analysis';
+    }
+
+    const page = await this.pageFor('googlefinance');
+    if (page && !page.isClosed()) {
+      await page.goto(url, { waitUntil: 'domcontentloaded', timeout: config.browser.navTimeoutMs });
+      await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+      await sleep(config.browser.settleMs);
+      await hooksFor('googlefinance').ensure(page);
+    }
+
+    return { ok: true, url, symbol, label: target?.label };
   }
 
   page(id) {
@@ -443,8 +571,28 @@ export class Capture {
   async captureAll(stamp) {
     return this.serialise(async () => {
       const results = [];
+      const capturedMap = new Map();
+
       for (const target of config.targets) {
-        results.push(await this.captureOne(target.id, stamp));
+        if (target.id === 'kite' && !this.kiteEnabled) {
+          continue; // Kite capture is disabled by the user switch
+        }
+
+        if (target.id === 'googlefinance' && !this.googleFinanceEnabled) {
+          continue; // Google Finance capture is disabled by user switch
+        }
+
+        if (target.isBackup && target.backupFor) {
+          const primaryResult = capturedMap.get(target.backupFor);
+          // Only capture backup if primary target failed or requires login!
+          if (primaryResult && primaryResult.ok && !primaryResult.awaitingLogin) {
+            continue;
+          }
+        }
+
+        const res = await this.captureOne(target.id, stamp);
+        results.push(res);
+        capturedMap.set(target.id, res);
       }
       this.cycle += 1;
 
@@ -459,19 +607,143 @@ export class Capture {
   }
 
   /**
+   * Specialized on-demand capture of Google Finance Beta with its AI Research panel
+   * primed with a one-week swing question for the monitored share.
+   */
+  async captureGoogleFinanceResearch({ symbol, query, stamp } = {}) {
+    return this.serialise(async () => {
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, '0');
+      const ts =
+        stamp ||
+        `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(
+          d.getSeconds(),
+        )}`;
+
+      const targetInput = (query || symbol || '').trim();
+      if (targetInput) {
+        await this.setGoogleFinanceTarget(targetInput);
+      } else if (!this.googleFinanceSymbol || this.googleFinanceSymbol === 'Overview' || this.googleFinanceSymbol === 'Market Overview') {
+        await this.setGoogleFinanceTarget('RELIANCE:NSE');
+      }
+
+      const page = await this.pageFor('googlefinance');
+      if (!page || page.isClosed()) {
+        throw new Error('Google Finance page is not available in browser context.');
+      }
+
+      const targetSymbol = this.googleFinanceSymbol || symbol || 'RELIANCE:NSE';
+      const notes = [];
+
+      // 1. Ensure page is settled & consent is dismissed & research panel opened
+      await hooksFor('googlefinance').ensure(page);
+      await sleep(1500);
+
+      // 2. Look for the "Ask anything" / AI prompt bar within the Research panel
+      let promptSent = false;
+      try {
+        const promptInput = page
+          .locator(
+            'textarea[placeholder*="Ask" i], input[placeholder*="Ask" i], textarea[aria-label*="Ask" i], input[aria-label*="Ask" i], div[contenteditable="true"][aria-label*="Ask" i], [role="combobox"][aria-label*="Ask" i]',
+          )
+          .first();
+
+        if (await promptInput.isVisible({ timeout: 2500 }).catch(() => false)) {
+          const promptQuery =
+            `I am swing trading ${targetSymbol} for the next 5 trading sessions only (entry and exit within one week). ` +
+            'Give me: the current trend and momentum on the daily chart, the nearest support and resistance levels with numbers, ' +
+            'recent volume behaviour, any earnings/dividend/corporate event or news landing in the next week, ' +
+            'and the main risks to a one-week long position.';
+          await promptInput.click().catch(() => {});
+          await promptInput.fill(promptQuery).catch(() => {});
+          await page.keyboard.press('Enter').catch(() => {});
+          promptSent = true;
+          notes.push(`Dispatched short-term prompt to Google Finance AI Research: "${promptQuery}"`);
+          await sleep(config.browser.googleFinanceResearchWaitMs || 6000);
+        }
+      } catch (e) {
+        notes.push(`AI Research prompt dispatch: ${e.message}`);
+      }
+
+      // 3. Extract text content from the right-side Research panel DOM
+      let researchText = '';
+      try {
+        researchText = await page.evaluate(() => {
+          const panel = document.querySelector(
+            'aside, [role="complementary"], [aria-label*="Research" i], [data-panel*="research" i], .research-panel',
+          );
+          if (panel) {
+            const text = (panel.innerText || '').trim();
+            if (text.length > 20) return text.slice(0, 4000);
+          }
+          const rightContainers = Array.from(document.querySelectorAll('aside, section, div')).filter((el) => {
+            const rect = el.getBoundingClientRect();
+            return rect.left > window.innerWidth * 0.55 && rect.width > 220 && rect.height > 250;
+          });
+          if (rightContainers.length > 0) {
+            rightContainers.sort((a, b) => b.offsetHeight * b.offsetWidth - a.offsetHeight * a.offsetWidth);
+            return (rightContainers[0].innerText || '').trim().slice(0, 4000);
+          }
+          return '';
+        });
+      } catch (e) {
+        researchText = '';
+      }
+
+      // 4. Capture the full high-res viewport screenshot
+      const file = `${ts}-googlefinance-research.png`;
+      const filePath = path.join(config.paths.shots, file);
+      await page.mouse.move(2, 2).catch(() => {});
+      await sleep(300);
+      const buffer = await page.screenshot(SHOT_OPTS);
+      await fs.writeFile(filePath, buffer);
+
+      return {
+        id: 'googlefinance',
+        label: `Google Finance Beta — ${targetSymbol} (AI Research)`,
+        symbol: targetSymbol,
+        url: page.url(),
+        ok: true,
+        file,
+        shotUrl: `/shots/${file}`,
+        base64: buffer.toString('base64'),
+        bytes: buffer.length,
+        notes,
+        researchText: researchText || null,
+        promptSent,
+      };
+    });
+  }
+
+  /**
    * Screenshot one configured snapshot view, writing the PNG into `outDir`.
    * Reuses the already-open (and logged-in) page for the view's target site.
    */
   async captureSnapshotView(view, outDir, stamp) {
     const notes = [];
-    const base = { id: view.id, label: view.label, target: view.target };
+    let activeTarget = view.target;
+    let hooks = hooksFor(activeTarget);
+    let page = await this.pageFor(activeTarget);
+
+    if (await hooks.awaitingLogin(page)) {
+      if (view.fallbackTarget) {
+        const fallbackHooks = hooksFor(view.fallbackTarget);
+        const fallbackPage = await this.pageFor(view.fallbackTarget);
+        if (!(await fallbackHooks.awaitingLogin(fallbackPage))) {
+          activeTarget = view.fallbackTarget;
+          hooks = fallbackHooks;
+          page = fallbackPage;
+          notes.push(`Main target (${view.target}) required login; used fallback target (${view.fallbackTarget})`);
+        }
+      }
+    }
+
+    const base = { id: view.id, label: view.label, target: activeTarget };
 
     try {
-      const hooks = hooksFor(view.target);
-      const page = await this.pageFor(view.target);
       if (await hooks.awaitingLogin(page)) {
         await this.setTucked(false);
-        throw new Error(`login required for ${view.target}`);
+        throw new Error(`login required for ${activeTarget}`);
       }
 
       if (view.url && page.url() !== view.url) {

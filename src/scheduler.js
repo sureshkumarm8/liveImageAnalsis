@@ -1,6 +1,6 @@
 import { EventEmitter } from 'node:events';
 import config from './config.js';
-import { analyse, unloadModel } from './ollama.js';
+import { analyse, unloadModel } from './ai.js';
 import { getQuote } from './quote.js';
 import { isMarketOpen, marketStatus, nextOpenAt } from './market.js';
 import { buildTrend } from './trend.js';
@@ -45,7 +45,8 @@ export class Scheduler extends EventEmitter {
       nextRunAt: this.nextRunAt,
       intervalMs: this.intervalMs,
       intervalOptions: Scheduler.INTERVAL_OPTIONS,
-      model: config.ollama.model,
+      provider: config.provider,
+      model: config[config.provider].model,
       lastError: this.lastError,
       cycle: this.capture.cycle,
       marketOpen: market.open,
@@ -165,7 +166,7 @@ export class Scheduler extends EventEmitter {
       flush();
     };
     this.activeTokenStream = onToken;
-    this.emit('analysis-start', { runId, at: new Date().toISOString(), model: config.ollama.model });
+    this.emit('analysis-start', { runId, at: new Date().toISOString(), model: config[config.provider].model });
     return onToken;
   }
 

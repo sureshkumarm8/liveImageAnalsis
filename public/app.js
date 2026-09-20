@@ -10,18 +10,87 @@ let snapping = false;
 const COLLAPSE_KEY = 'shotsCollapsed';
 const ANALYSIS_COLLAPSE_KEY = 'analysisCollapsed';
 const THEME_KEY = 'theme';
-const RING_LEN = 2 * Math.PI * 19;
+const SCREEN_KEY = 'marketAppScreen';
+const RING_LEN = 100; // path circumference for the new SVG ring
+
+const BRIEF_KEY = 'swingBrief';
+
+// The last session of the current one-week window, served by /api/status. Shown on the
+// header and in the empty report so the horizon is never ambiguous.
+let exitByLabel = '';
 
 let shotsCollapsed = localStorage.getItem(COLLAPSE_KEY) === 'true';
 let analysisCollapsed = localStorage.getItem(ANALYSIS_COLLAPSE_KEY) === 'true';
+let activeScreen = 'market';
 
 const fmtTime = (iso) => new Date(iso).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+
+/* ---------- screen switcher ---------- */
+function switchScreen(screenName) {
+  if (screenName !== 'market' && screenName !== 'stocks') {
+    screenName = 'market';
+  }
+  activeScreen = screenName;
+  try {
+    localStorage.setItem(SCREEN_KEY, screenName);
+  } catch {}
+
+  const targetHash = screenName === 'stocks' ? '#stocks' : '#market';
+  if (window.location.hash !== targetHash) {
+    history.replaceState(null, '', targetHash);
+  }
+
+  const marketScreen = $('screenMarket');
+  const stocksScreen = $('screenStocks');
+  const tabMarket = $('tabMarket');
+  const tabStocks = $('tabStocks');
+
+  if (screenName === 'stocks') {
+    if (marketScreen) marketScreen.hidden = true;
+    if (stocksScreen) stocksScreen.hidden = false;
+    if (tabMarket) tabMarket.classList.remove('active');
+    if (tabStocks) tabStocks.classList.add('active');
+  } else {
+    if (stocksScreen) stocksScreen.hidden = true;
+    if (marketScreen) marketScreen.hidden = false;
+    if (tabStocks) tabStocks.classList.remove('active');
+    if (tabMarket) tabMarket.classList.add('active');
+  }
+}
+
+function initScreen() {
+  const hash = (window.location.hash || '').replace('#', '').toLowerCase();
+  let target = 'market';
+  if (hash === 'stocks' || hash === 'market') {
+    target = hash;
+  } else {
+    try {
+      const saved = localStorage.getItem(SCREEN_KEY);
+      if (saved === 'stocks' || saved === 'market') target = saved;
+    } catch {}
+  }
+  switchScreen(target);
+}
+
+window.addEventListener('hashchange', () => {
+  const hash = (window.location.hash || '').replace('#', '').toLowerCase();
+  if (hash === 'stocks' || hash === 'market') {
+    switchScreen(hash);
+  }
+});
 
 /* ---------- theme ---------- */
 function applyTheme(theme) {
   document.documentElement.dataset.theme = theme;
   localStorage.setItem(THEME_KEY, theme);
-  $('themeBtn').title = theme === 'dark' ? 'Switch to light theme' : 'Switch to dark theme';
+  const next = theme === 'dark' ? 'Light' : 'Dark';
+  const btn = $('themeBtn');
+  if (btn) btn.title = `Switch to ${next.toLowerCase()} theme`;
+  if ($('themeLabel')) $('themeLabel').textContent = `${next} theme`;
+  document.querySelectorAll('#themeSegment .segment').forEach((b) => {
+    b.classList.toggle('active', b.dataset.value === theme);
+    b.setAttribute('aria-selected', String(b.dataset.value === theme));
+  });
 }
 applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
 
@@ -35,6 +104,14 @@ function toast(message, kind = '') {
     el.classList.add('out');
     setTimeout(() => el.remove(), 250);
   }, 3200);
+}
+
+/** Drive a `role="switch"` control: the state word and the checked attribute. */
+function setSwitch(btnId, stateId, on) {
+  const btn = $(btnId);
+  if (btn) btn.setAttribute('aria-checked', String(Boolean(on)));
+  const state = $(stateId);
+  if (state) state.textContent = on ? 'ON' : 'OFF';
 }
 
 function setList(el, items, empty = '—') {
@@ -402,8 +479,329 @@ function renderAnalysis(run) {
   setList($('watchFor'), p.watch_for);
   setList($('risks'), p.risks);
 
+  if (hasValidFinancialData(p.financial_analysis)) {
+    renderFinancialReport(p.financial_analysis, run ? `Captured with run ${run.id}` : '');
+    const gfShot = (run?.shots || []).find((s) => s.id === 'googlefinance' || s.target === 'googlefinance');
+    if (gfShot) renderGfShot(gfShot);
+  } else if (!window.__onDemandReportActive) {
+    renderFinancialReport(null);
+    renderGfShot(null);
+  }
+
   currentParsed = p;
   renderTrend(trend, p);
+}
+
+function renderGfShot(shot) {
+  const card = $('gfShotCard');
+  const img = $('gfShotImg');
+  const meta = $('gfShotMeta');
+  if (!card || !img) return;
+  if (!shot || !shot.url) {
+    card.hidden = true;
+    return;
+  }
+  img.src = shot.url;
+  if (meta) {
+    meta.textContent = `${shot.label || 'Google Finance Research'} · ${fmtTime(shot.ts || Date.now())}`;
+  }
+  card.hidden = false;
+}
+
+function hasValidFinancialData(data) {
+  if (!data || typeof data !== 'object') return false;
+  // The Stocks screen shows a swing *call*, so a bare fundamentals blob (what the
+  // intraday run attaches to a Google Finance shot) must not light it up.
+  if (!data.short_term_verdict && !data.trade_plan) return false;
+  const name = (data.target_name || data.ticker || '').trim();
+  const price = (data.current_price || '').trim();
+  if (!name || name === '—' || name === 'N/A' || name.toLowerCase() === 'stock' || name.toLowerCase() === 'market overview') {
+    return false;
+  }
+  if (!price || price === '—' || price === 'N/A') {
+    return false;
+  }
+  return true;
+}
+
+const SETUP_LABELS = {
+  breakout: 'Breakout',
+  pullback_to_support: 'Pullback to support',
+  trend_continuation: 'Trend continuation',
+  reversal: 'Reversal',
+  range_fade: 'Range fade',
+  momentum_burst: 'Momentum burst',
+  event_driven: 'Event driven',
+  no_setup: 'No setup',
+};
+
+const SCORE_ROWS = [
+  ['trend', 'Trend'],
+  ['momentum', 'Momentum'],
+  ['volume_liquidity', 'Volume & liquidity'],
+  ['catalyst', 'Catalyst'],
+  ['risk_reward', 'Risk : reward'],
+  ['valuation', 'Valuation'],
+];
+
+function setText(id, value, fallback = '—') {
+  const el = $(id);
+  if (el) el.textContent = value || fallback;
+}
+
+/** Six 0-10 components as bars, so a weak leg of the setup is visible at a glance. */
+function renderScorecard(scores) {
+  const wrap = $('gfReportScorecard');
+  const totalEl = $('gfScoreTotal');
+  if (!wrap) return;
+  wrap.innerHTML = '';
+
+  const src = scores || {};
+  let sum = 0;
+  let counted = 0;
+
+  SCORE_ROWS.forEach(([key, label]) => {
+    const raw = Number(src[key]);
+    const val = Number.isFinite(raw) ? Math.max(0, Math.min(10, Math.round(raw))) : null;
+    if (val !== null) {
+      sum += val;
+      counted += 1;
+    }
+
+    const row = document.createElement('div');
+    row.className = 'gf-score-row';
+
+    const name = document.createElement('span');
+    name.className = 'gf-score-name';
+    name.textContent = label;
+
+    const track = document.createElement('div');
+    track.className = 'gf-score-track';
+    const fill = document.createElement('div');
+    fill.className = `gf-score-fill ${val === null ? 'none' : val >= 7 ? 'good' : val >= 4 ? 'mid' : 'poor'}`;
+    fill.style.width = `${(val ?? 0) * 10}%`;
+    track.appendChild(fill);
+
+    const num = document.createElement('b');
+    num.className = 'gf-score-val';
+    num.textContent = val === null ? '—' : `${val}/10`;
+
+    row.append(name, track, num);
+    wrap.appendChild(row);
+  });
+
+  if (totalEl) totalEl.textContent = counted ? `${sum} / ${counted * 10} overall` : '—';
+}
+
+function renderFinancialReport(data, metaText = '') {
+  const panel = $('gfReportPanel');
+  if (!panel) return;
+  panel.hidden = false;
+
+  const displaySymbol = data?.ticker || data?.target_name || $('gfActiveSymbol')?.textContent || '—';
+  if ($('stocksHeaderActiveSymbol') && displaySymbol && displaySymbol !== '—') {
+    $('stocksHeaderActiveSymbol').textContent = displaySymbol;
+  }
+
+  const setupChip = $('gfReportSetup');
+  const gradeEl = $('gfReportGrade');
+  const whyNowEl = $('gfReportWhyNow');
+  const gapsCard = $('gfDataGapsCard');
+
+  if (!hasValidFinancialData(data)) {
+    $('gfReportMeta').textContent = metaText || 'No call on the desk yet';
+    $('gfReportTicker').textContent = 'READY';
+    $('gfReportHorizon').textContent = exitByLabel ? `One-week swing · exit by ${exitByLabel}` : 'One-week swing';
+    $('gfReportName').textContent = 'Ask for a one-week swing call';
+    $('gfReportPrice').textContent = '—';
+    const delta = $('gfReportDelta');
+    if (delta) {
+      delta.textContent = '';
+      delta.className = 'delta';
+    }
+    if (setupChip) setupChip.hidden = true;
+    if (gradeEl) {
+      gradeEl.textContent = '—';
+      gradeEl.className = 'gf-grade-badge';
+    }
+    const verdictEl = $('gfReportVerdict');
+    if (verdictEl) {
+      verdictEl.textContent = 'AWAITING ANALYSIS';
+      verdictEl.className = 'gf-verdict-badge neutral';
+    }
+    setText('gfReportConviction', '—');
+    setText('gfReportDataConf', '', '');
+    const healthBadge = $('gfReportHealth');
+    if (healthBadge) {
+      healthBadge.textContent = 'STANDBY';
+      healthBadge.className = 'gf-health-badge neutral';
+    }
+    if (whyNowEl) whyNowEl.hidden = true;
+    setText(
+      'gfReportVerdictSummary',
+      'Pick a share above (chip, or a symbol like RELIANCE:NSE), set the capital you are trading with, and click “Advise Me”. You get a verdict, an entry trigger, a structural stop, a share count sized to your risk budget, and the session you walk away on.',
+    );
+
+    ['gfReportEntry', 'gfReportSL', 'gfReportTargets', 'gfReportRR', 'gfReportQty', 'gfReportTimeStop'].forEach((id) =>
+      setText(id, 'Awaiting call'),
+    );
+    setText('gfReportEntryTrigger', 'Buy only on the trigger');
+    setText('gfReportRiskPerShare', 'Structural invalidation');
+    setText('gfReportExpMove', 'Book inside the week');
+    setText('gfReportCapitalDeployed', 'For your stated capital');
+
+    ['gfReportMktCap', 'gfReportPE', 'gfReport52W', 'gfReportDiv', 'gfReportDayRange'].forEach((id) => setText(id, '—'));
+
+    renderScorecard(null);
+    setList($('gfReportAiInsights'), [
+      'The Google Finance Beta AI Research panel is queried live with a one-week swing brief for the share you pick.',
+      'Its answer is merged with the price screen into a single, sized trade plan.',
+    ]);
+
+    ['gfReportTrend', 'gfReportMomentum', 'gfReportVolume', 'gfReport52wProx', 'gfReportVolatility',
+      'gfReportKeySupport', 'gfReportKeyResist', 'gfReportTrigger', 'gfReportExitPlan', 'gfReportSizingNote', 'gfReportInvalidation',
+      'gfReportBull', 'gfReportBear', 'gfReportValuation'].forEach((id) => setText(id, '—'));
+
+    setList($('gfReportCatalysts'), ['Awaiting the call — catalysts landing inside the week appear here.']);
+    setList($('gfReportRisks'), ['Awaiting the call — what threatens the stop appears here.']);
+    setList($('gfReportHighlights'), []);
+    setText('gfReportTakeaway', 'Ready when you are — pick a share and ask for the call.');
+    if (gapsCard) gapsCard.hidden = true;
+    return;
+  }
+
+  $('gfReportMeta').textContent = metaText || (data.ticker ? `Ticker: ${data.ticker}` : '');
+  $('gfReportTicker').textContent = data.ticker || data.target_name || 'Stock';
+  $('gfReportHorizon').textContent = data.time_horizon || 'One-week swing';
+  $('gfReportName').textContent = data.target_name || data.ticker || 'One-week swing call';
+  $('gfReportPrice').textContent = data.current_price || '—';
+
+  const delta = $('gfReportDelta');
+  if (data.day_change) {
+    delta.textContent = data.day_change;
+    const isUp = data.day_change.includes('+');
+    const isDown = data.day_change.includes('-');
+    delta.className = `delta ${isUp ? 'up' : isDown ? 'down' : 'flat'}`;
+  } else {
+    delta.textContent = '';
+    delta.className = 'delta';
+  }
+
+  // Setup type
+  if (setupChip) {
+    const setup = (data.setup_type || '').toLowerCase();
+    if (setup) {
+      setupChip.textContent = SETUP_LABELS[setup] || setup.replace(/_/g, ' ');
+      setupChip.className = `gf-setup-chip${setup === 'no_setup' ? ' none' : ''}`;
+      setupChip.hidden = false;
+    } else {
+      setupChip.hidden = true;
+    }
+  }
+
+  // Setup grade — A+ / A are the only ones worth full size, so they get the loud colour.
+  if (gradeEl) {
+    const grade = (data.trade_grade || '').toUpperCase();
+    gradeEl.textContent = grade ? grade.replace('A_PLUS', 'A+') : '—';
+    gradeEl.className = `gf-grade-badge${grade ? ` g-${grade.toLowerCase().replace('_', '-')}` : ''}`;
+  }
+
+  // Verdict badge
+  const rawVerdict = (data.short_term_verdict || 'NEUTRAL').toUpperCase();
+  const verdictEl = $('gfReportVerdict');
+  if (verdictEl) {
+    verdictEl.textContent = rawVerdict.replace(/_/g, ' ');
+    verdictEl.className = `gf-verdict-badge ${rawVerdict.toLowerCase().replace(/_/g, '-')}`;
+  }
+
+  setText('gfReportConviction', data.conviction_score ? `${data.conviction_score}%` : '—');
+  setText(
+    'gfReportDataConf',
+    Number(data.data_confidence) ? `screen read ${data.data_confidence}%` : '',
+    '',
+  );
+
+  const health = (data.financial_health || 'neutral').toLowerCase();
+  const healthBadge = $('gfReportHealth');
+  if (healthBadge) {
+    healthBadge.textContent = health;
+    healthBadge.className = `gf-health-badge ${health}`;
+  }
+
+  if (whyNowEl) {
+    whyNowEl.textContent = data.why_now || '';
+    whyNowEl.hidden = !data.why_now;
+  }
+  setText('gfReportVerdictSummary', data.verdict_summary || data.analyst_takeaway || 'One-week swing call generated.');
+
+  // Order ticket
+  const plan = data.trade_plan || {};
+  const sizing = data.position_sizing || {};
+  setText('gfReportEntry', plan.entry_zone);
+  setText('gfReportEntryTrigger', plan.entry_trigger, 'Buy only on the trigger');
+  setText('gfReportSL', plan.stop_loss);
+  setText('gfReportRiskPerShare', sizing.risk_per_share ? `Risk/share ${sizing.risk_per_share}` : '', 'Structural invalidation');
+  const t1 = plan.target_1 || '';
+  const t2 = plan.target_2 || '';
+  setText('gfReportTargets', t1 && t2 ? `${t1} / ${t2}` : t1 || t2);
+  setText('gfReportExpMove', plan.expected_move_pct ? `Expected move ${plan.expected_move_pct}` : '', 'Book inside the week');
+  setText('gfReportRR', plan.risk_reward_ratio);
+  setText('gfReportQty', sizing.quantity);
+  setText(
+    'gfReportCapitalDeployed',
+    [sizing.capital_deployed && `Deploys ${sizing.capital_deployed}`, sizing.risk_amount && `risking ${sizing.risk_amount}`]
+      .filter(Boolean)
+      .join(' · '),
+    'For your stated capital',
+  );
+  setText('gfReportTimeStop', plan.time_stop);
+
+  // Fundamentals strip
+  setText('gfReportMktCap', data.market_cap);
+  setText('gfReportPE', data.pe_ratio);
+  setText('gfReport52W', data.year_range);
+  setText('gfReportDiv', data.dividend_yield);
+  setText('gfReportDayRange', data.day_range);
+
+  renderScorecard(data.scorecard);
+
+  // Playbook
+  setText('gfReportTrigger', plan.entry_trigger);
+  setText('gfReportExitPlan', plan.exit_plan);
+  setText('gfReportSizingNote', sizing.binding_constraint);
+  setText('gfReportInvalidation', data.invalidation);
+
+  // Technical momentum
+  const tech = data.technical_momentum || {};
+  setText('gfReportTrend', tech.trend_structure);
+  setText('gfReportMomentum', tech.momentum_read);
+  setText('gfReportVolume', tech.volume_liquidity);
+  setText('gfReport52wProx', tech.proximity_to_52w);
+  setText('gfReportVolatility', tech.volatility_note);
+  setText('gfReportKeySupport', tech.key_support);
+  setText('gfReportKeyResist', tech.key_resistance);
+
+  setText('gfReportBull', data.bull_case);
+  setText('gfReportBear', data.bear_case);
+
+  const researchItems = data.google_finance_ai_insights?.length
+    ? data.google_finance_ai_insights
+    : data.catalysts_and_news || ['AI Research panel observed; no explicit bullet points extracted.'];
+  setList($('gfReportAiInsights'), researchItems);
+
+  setList($('gfReportCatalysts'), data.near_term_catalysts || data.catalysts_and_news || []);
+  setList($('gfReportRisks'), data.short_term_risks || data.risks || []);
+
+  setText('gfReportValuation', data.valuation_summary);
+  setList($('gfReportHighlights'), data.financial_highlights || (data.key_metrics ? [data.key_metrics] : []));
+  setText('gfReportTakeaway', data.analyst_takeaway);
+
+  // Everything the model could not read is stated, not hidden — it is why conviction is low.
+  const gaps = (data.data_gaps || []).filter(Boolean);
+  if (gapsCard) {
+    gapsCard.hidden = gaps.length === 0;
+    if (gaps.length) setList($('gfReportDataGaps'), gaps);
+  }
 }
 
 /**
@@ -424,6 +822,8 @@ function resetView() {
   currentParsed = null;
   pinned = false;
   renderShots({ shots: [] });
+  renderFinancialReport(null);
+  renderGfShot(null);
   $('shotsMeta').textContent = '';
   $('runMeta').textContent = 'waiting for first run…';
   $('rawOut').textContent = '';
@@ -503,7 +903,8 @@ let intervalOptsKey = '';
 const fmtMins = (m) => (m === 1 ? '1 min' : Number.isInteger(m) ? `${m} mins` : `${m} mins`);
 
 function syncIntervalSelect(s) {
-  const sel = $('intervalSel');
+  const sel = $('settingsIntervalSelect');
+  if (!sel) return;
   const current = Math.round(((s.intervalMs || 60000) / 60000) * 100) / 100;
   const opts = [...(s.intervalOptions || [1, 2, 5, 10, 15])];
   // Keep an out-of-list interval (e.g. one set via INTERVAL_SECONDS) visible rather than lying.
@@ -585,11 +986,32 @@ function applyStatus(s) {
     ? 'Capture and analyse right now'
     : 'Market is closed — this runs a one-off capture anyway';
   $('snapBtn').disabled = !!s.running || snapping;
+
+  if (s.kiteEnabled !== undefined) setSwitch('kiteToggleBtn', 'kiteTogglePill', s.kiteEnabled);
+
+  if (s.googleFinance) {
+    setSwitch('gfToggleBtn', 'gfTogglePill', s.googleFinance.enabled);
+    const symbolEl = $('gfActiveSymbol');
+    if (symbolEl && s.googleFinance.symbol) {
+      symbolEl.textContent = s.googleFinance.symbol;
+      if ($('stocksHeaderActiveSymbol')) $('stocksHeaderActiveSymbol').textContent = s.googleFinance.symbol;
+    }
+    const extLink = $('gfExtLink');
+    if (extLink && s.googleFinance.url) {
+      extLink.href = s.googleFinance.url;
+    }
+  }
+  if ($('stocksHeaderAiProvider')) {
+    $('stocksHeaderAiProvider').textContent = (s.provider || 'AI').toUpperCase();
+  }
+  if (s.advisor) {
+    applyAdvisorDefaults(s.advisor);
+  }
 }
 
 function tickCountdown() {
-  const el = $('countdown');
-  const ring = $('ringFill');
+  const el = $('ringLabel');
+  const ring = $('ringFg');
   const setRing = (frac) => {
     ring.style.strokeDashoffset = String(RING_LEN * (1 - Math.max(0, Math.min(1, frac))));
   };
@@ -605,12 +1027,12 @@ function tickCountdown() {
     const h = Math.floor(left / 3600000);
     const mm = Math.floor((left % 3600000) / 60000);
     el.textContent = h > 0 ? `${h}h${String(mm).padStart(2, '0')}` : `${mm}m`;
-    $('ringWrap').title = `Market closed — next open ${fmtClock(status.nextRunAt)}`;
+    document.querySelector('.ring-wrap').title = `Market closed — next open ${fmtClock(status.nextRunAt)}`;
     setRing(0);
     return;
   }
 
-  $('ringWrap').title = 'Time until the next automatic run';
+  document.querySelector('.ring-wrap').title = 'Time until the next automatic run';
   const m = Math.floor(left / 60000);
   const sec = Math.floor((left % 60000) / 1000);
   el.textContent = `${String(m).padStart(2, '0')}:${String(sec).padStart(2, '0')}`;
@@ -627,33 +1049,54 @@ function setWindowBtn(visible) {
     : 'Bring the capture browser window back on screen (shortcut: B)';
 }
 
-async function pollOllama() {
+async function pollProvider() {
   try {
     const s = await (await fetch('/api/status')).json();
     renderQuotePill(s.quote);
-    const pill = $('ollamaPill');
-    const gb = s.ollama?.loaded?.bytes ? (s.ollama.loaded.bytes / 1073741824).toFixed(1) : null;
-    if (s.ollama?.ok && s.ollama.hasModel) {
-      pill.className = 'pill ok';
-      $('ollamaText').textContent = gb ? `ollama · ${gb}GB` : 'ollama · idle';
-      pill.title = gb
-        ? 'Model is resident in memory for fast analysis'
-        : 'Model unloaded — memory released. It reloads automatically (~4s) on the next run.';
-    } else if (s.ollama?.ok) {
-      pill.className = 'pill bad';
-      $('ollamaText').textContent = 'model missing';
-    } else {
-      pill.className = 'pill bad';
-      $('ollamaText').textContent = 'ollama offline';
+    // Only this endpoint carries the full payload — the SSE `status` event is the
+    // scheduler's view and has neither the provider name nor the adviser defaults.
+    if (s.advisor) applyAdvisorDefaults(s.advisor);
+    if ($('stocksHeaderAiProvider') && s.provider) {
+      $('stocksHeaderAiProvider').textContent = s.provider.toUpperCase();
     }
+    const pill = $('providerPill');
+    
+    if (s.provider === 'gemini') {
+      if (s.ai?.ok) {
+        pill.className = 'pill ok';
+        $('providerText').textContent = 'gemini · ready';
+        pill.title = 'Gemini API is ready to process analysis';
+      } else {
+        pill.className = 'pill bad';
+        $('providerText').textContent = 'gemini · error';
+        pill.title = s.ai?.error || 'Missing GEMINI_API_KEY';
+      }
+    } else {
+      const gb = s.ai?.loaded?.bytes ? (s.ai.loaded.bytes / 1073741824).toFixed(1) : null;
+      if (s.ai?.ok && s.ai.hasModel) {
+        pill.className = 'pill ok';
+        $('providerText').textContent = gb ? `ollama · ${gb}GB` : 'ollama · idle';
+        pill.title = gb
+          ? 'Model is resident in memory for fast analysis'
+          : 'Model unloaded — memory released. It reloads automatically (~4s) on the next run.';
+      } else if (s.ai?.ok) {
+        pill.className = 'pill bad';
+        $('providerText').textContent = 'model missing';
+      } else {
+        pill.className = 'pill bad';
+        $('providerText').textContent = 'ollama offline';
+      }
+    }
+    
+    renderProviderSettings(s);
 
     const wb = $('windowBtn');
     // Window control needs CDP + TUCK_WINDOW; hide the button outright when unavailable.
     wb.hidden = s.windowControl === false;
     if (!wb.hidden) setWindowBtn(s.windowVisible);
   } catch {
-    $('ollamaPill').className = 'pill bad';
-    $('ollamaText').textContent = 'server offline';
+    $('providerPill').className = 'pill bad';
+    $('providerText').textContent = 'server offline';
   }
 }
 
@@ -775,6 +1218,476 @@ document.addEventListener('click', (e) => {
   if (!e.target.closest('#moreWrap')) closeMenu();
 });
 
+$('kiteToggleBtn').onclick = async (e) => {
+  e.stopPropagation();
+  try {
+    const res = await fetch('/api/kite-toggle', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      setSwitch('kiteToggleBtn', 'kiteTogglePill', data.kiteEnabled);
+      toast(`Kite backup capture ${data.kiteEnabled ? 'enabled' : 'disabled'}`, 'ok');
+    }
+  } catch (err) {
+    toast(`Failed to toggle Kite backup: ${err.message}`, 'bad');
+  }
+};
+
+const toggleGoogleFinance = async (e) => {
+  if (e) e.stopPropagation();
+  try {
+    const res = await fetch('/api/google-finance/toggle', { method: 'POST' });
+    const data = await res.json();
+    if (data.ok) {
+      setSwitch('gfToggleBtn', 'gfTogglePill', data.googleFinanceEnabled);
+      toast(`Google Finance in routine runs ${data.googleFinanceEnabled ? 'enabled' : 'disabled'}`, 'ok');
+    }
+  } catch (err) {
+    toast(`Failed to toggle Google Finance: ${err.message}`, 'bad');
+  }
+};
+
+$('gfToggleBtn').onclick = toggleGoogleFinance;
+
+/* ---------- Google Finance research controls ---------- */
+async function setGfTarget(query) {
+  const loadBtn = $('gfLoadBtn');
+  loadBtn.disabled = true;
+  try {
+    const res = await fetch('/api/google-finance/target', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query }),
+    });
+    const data = await res.json();
+    if (data.ok) {
+      $('gfActiveSymbol').textContent = data.symbol || 'Google Finance';
+      if ($('stocksHeaderActiveSymbol')) $('stocksHeaderActiveSymbol').textContent = data.symbol || 'Google Finance';
+      if (data.url) $('gfExtLink').href = data.url;
+      toast(`Google Finance set to ${data.symbol || 'target'}`, 'ok');
+    } else {
+      toast(`Failed to set share: ${data.error}`, 'bad');
+    }
+  } catch (err) {
+    toast(`Failed to set target: ${err.message}`, 'bad');
+  } finally {
+    loadBtn.disabled = false;
+  }
+}
+
+document.querySelectorAll('.gf-chip').forEach((chip) => {
+  chip.onclick = async () => {
+    const ticker = chip.dataset.ticker;
+    $('gfInput').value = ticker === 'overview' ? '' : ticker;
+    await setGfTarget(ticker);
+  };
+});
+
+$('gfForm').onsubmit = async (e) => {
+  e.preventDefault();
+  const val = $('gfInput').value.trim();
+  await setGfTarget(val);
+};
+
+/* ---------- the client brief: capital and risk budget the adviser sizes against ---------- */
+const briefDefaults = { capital: 100000, riskPct: 2, maxAllocPct: 25, currency: '₹' };
+let briefSeededFromServer = false;
+
+function readBrief() {
+  const pick = (id, dflt) => {
+    const v = Number($(id)?.value);
+    return Number.isFinite(v) && v > 0 ? v : dflt;
+  };
+  return {
+    capital: pick('gfCapital', briefDefaults.capital),
+    riskPct: pick('gfRiskPct', briefDefaults.riskPct),
+    maxAllocPct: pick('gfMaxAlloc', briefDefaults.maxAllocPct),
+  };
+}
+
+const briefMoney = (n) => `${briefDefaults.currency}${Math.round(n).toLocaleString('en-IN')}`;
+
+function updateBriefHint({ persist = true } = {}) {
+  const b = readBrief();
+  const hint = $('gfBriefHint');
+  if (hint) {
+    hint.textContent =
+      `Risking ${briefMoney((b.capital * b.riskPct) / 100)} per trade · ` +
+      `max ${briefMoney((b.capital * b.maxAllocPct) / 100)} in one position`;
+  }
+  if (persist) {
+    try {
+      localStorage.setItem(BRIEF_KEY, JSON.stringify(b));
+    } catch {}
+  }
+}
+
+function writeBrief(brief) {
+  if ($('gfCapital')) $('gfCapital').value = brief.capital;
+  if ($('gfRiskPct')) $('gfRiskPct').value = brief.riskPct;
+  if ($('gfMaxAlloc')) $('gfMaxAlloc').value = brief.maxAllocPct;
+}
+
+/** Server-side defaults (.env) seed the fields once; after that your own numbers win. */
+function applyAdvisorDefaults(advisor) {
+  if (advisor.currency) briefDefaults.currency = advisor.currency;
+  ['capital', 'riskPct', 'maxAllocPct'].forEach((k) => {
+    if (Number(advisor[k]) > 0) briefDefaults[k] = Number(advisor[k]);
+  });
+
+  if (advisor.window?.exitBy) {
+    exitByLabel = advisor.window.exitBy;
+    if ($('stocksHeaderExitBy')) $('stocksHeaderExitBy').textContent = exitByLabel;
+  }
+
+  if (!briefSeededFromServer) {
+    briefSeededFromServer = true;
+    let saved = null;
+    try {
+      saved = JSON.parse(localStorage.getItem(BRIEF_KEY) || 'null');
+    } catch {}
+    if (!saved) {
+      writeBrief(briefDefaults);
+      updateBriefHint({ persist: false });
+    }
+  }
+}
+
+(function initBrief() {
+  let saved = null;
+  try {
+    saved = JSON.parse(localStorage.getItem(BRIEF_KEY) || 'null');
+  } catch {}
+  if (saved) writeBrief({ ...briefDefaults, ...saved });
+  ['gfCapital', 'gfRiskPct', 'gfMaxAlloc'].forEach((id) => {
+    const el = $(id);
+    if (el) el.oninput = () => updateBriefHint();
+  });
+  updateBriefHint({ persist: false });
+})();
+
+$('gfAnalyseBtn').onclick = async () => {
+  const btn = $('gfAnalyseBtn');
+  btn.disabled = true;
+  const origHtml = btn.innerHTML;
+  btn.innerHTML = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" class="spin"><circle cx="12" cy="12" r="10" stroke-dasharray="32" stroke-linecap="round"/></svg> Advising…`;
+  toast('Asking Google Finance Beta AI Research for a one-week read…');
+  try {
+    let inputVal = $('gfInput').value.trim();
+    if (!inputVal) {
+      const activeText = $('gfActiveSymbol')?.textContent?.trim();
+      if (activeText && !activeText.toLowerCase().includes('overview')) {
+        inputVal = activeText;
+      } else {
+        inputVal = 'RELIANCE:NSE';
+        $('gfInput').value = 'RELIANCE:NSE';
+      }
+    }
+    const brief = readBrief();
+    const res = await fetch('/api/google-finance/analyse', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ query: inputVal, ...brief }),
+    });
+    const data = await res.json();
+    if (data.ok && data.report?.parsed) {
+      window.__onDemandReportActive = true;
+      renderFinancialReport(data.report.parsed, `Google Finance AI Analysis at ${new Date().toLocaleTimeString()}`);
+      if (data.shot?.url) {
+        renderGfShot(data.shot);
+      }
+      toast('One-week swing call ready.', 'ok');
+      await loadStockHistory();
+      $('gfReportPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    } else {
+      const errMsg = data.error || data.report?.error || 'Failed to extract financial data from the screen.';
+      toast(`Report failed: ${errMsg}`, 'bad');
+    }
+  } catch (err) {
+    toast(`Error: ${err.message}`, 'bad');
+  } finally {
+    btn.disabled = false;
+    btn.innerHTML = origHtml;
+  }
+};
+
+let gfReportCollapsed = false;
+$('gfReportToggle').onclick = () => {
+  gfReportCollapsed = !gfReportCollapsed;
+  $('gfReportPanel').classList.toggle('collapsed', gfReportCollapsed);
+  $('gfReportCaret').setAttribute('aria-expanded', String(!gfReportCollapsed));
+  $('gfReportCaret').title = gfReportCollapsed ? 'Expand' : 'Collapse';
+};
+
+let gfShotCollapsed = false;
+if ($('gfShotToggle')) {
+  $('gfShotToggle').onclick = () => {
+    gfShotCollapsed = !gfShotCollapsed;
+    $('gfShotCard').classList.toggle('collapsed', gfShotCollapsed);
+    if ($('gfShotCaret')) {
+      $('gfShotCaret').setAttribute('aria-expanded', String(!gfShotCollapsed));
+      $('gfShotCaret').title = gfShotCollapsed ? 'Expand' : 'Collapse';
+    }
+  };
+}
+
+// Bind Screen Switching Tabs
+if ($('tabMarket')) $('tabMarket').onclick = () => switchScreen('market');
+if ($('tabStocks')) $('tabStocks').onclick = () => switchScreen('stocks');
+
+/* ---------- Stock Analysis History Logic ---------- */
+let stockHistoryItems = [];
+let currentStockRunId = null;
+
+async function loadStockHistory() {
+  const container = $('stocksHistory');
+  if (!container) return;
+
+  try {
+    const res = await fetch('/api/stocks/history');
+    if (res.ok) {
+      stockHistoryItems = await res.json();
+      try {
+        localStorage.setItem('stocksHistory', JSON.stringify(stockHistoryItems));
+      } catch {}
+    } else {
+      throw new Error(`HTTP ${res.status}`);
+    }
+  } catch (err) {
+    try {
+      stockHistoryItems = JSON.parse(localStorage.getItem('stocksHistory') || '[]');
+    } catch {
+      stockHistoryItems = [];
+    }
+  }
+
+  renderStockHistory(stockHistoryItems);
+}
+
+function renderStockHistory(items) {
+  const container = $('stocksHistory');
+  const countEl = $('stocksHistCount');
+  const clearBtn = $('clearStocksHistBtn');
+  if (!container) return;
+
+  container.innerHTML = '';
+
+  if (!items || !items.length) {
+    if (countEl) countEl.textContent = '0 analyses';
+    if (clearBtn) clearBtn.style.display = 'none';
+    const empty = document.createElement('div');
+    empty.className = 'stocks-hist-empty';
+    empty.innerHTML = `No calls on the desk yet. Pick a share above and click <b>Advise Me</b>.`;
+    container.appendChild(empty);
+    return;
+  }
+
+  if (countEl) {
+    countEl.textContent = `${items.length} analys${items.length === 1 ? 'is' : 'es'}`;
+  }
+  if (clearBtn) {
+    clearBtn.style.display = 'inline-flex';
+  }
+
+  items.forEach((item) => {
+    const card = document.createElement('div');
+    card.className = `stock-hist-card ${item.id === currentStockRunId ? 'active' : ''}`;
+    card.dataset.id = item.id;
+
+    // Main Left Column
+    const mainCol = document.createElement('div');
+    mainCol.className = 'sh-main';
+
+    const topRow = document.createElement('div');
+    topRow.className = 'sh-top-row';
+
+    const tickerSpan = document.createElement('span');
+    tickerSpan.className = 'sh-ticker';
+    tickerSpan.textContent = item.ticker || 'STOCK';
+    topRow.appendChild(tickerSpan);
+
+    const nameSpan = document.createElement('span');
+    nameSpan.className = 'sh-name';
+    nameSpan.textContent = item.target_name || item.ticker || 'Stock Analysis';
+    topRow.appendChild(nameSpan);
+
+    const timeSpan = document.createElement('span');
+    timeSpan.className = 'sh-time';
+    const d = item.at ? new Date(item.at) : new Date();
+    timeSpan.textContent = `${d.toLocaleDateString([], { month: 'short', day: 'numeric' })} · ${fmtTime(d)}`;
+    topRow.appendChild(timeSpan);
+
+    mainCol.appendChild(topRow);
+
+    const summaryP = document.createElement('p');
+    summaryP.className = 'sh-summary-text';
+    summaryP.textContent =
+      item.summary || item.report?.parsed?.analyst_takeaway || 'One-week swing call: setup, sized trade plan and exit date.';
+    mainCol.appendChild(summaryP);
+
+    card.appendChild(mainCol);
+
+    // Metrics Middle Column
+    const metricsCol = document.createElement('div');
+    metricsCol.className = 'sh-metrics';
+
+    // Verdict badge
+    const rawVerdict = (item.verdict || 'NEUTRAL').toUpperCase();
+    const verdictCls = rawVerdict.toLowerCase().replace(/_/g, '-');
+    const verdictBadge = document.createElement('span');
+    verdictBadge.className = `gf-verdict-badge ${verdictCls}`;
+    verdictBadge.textContent = rawVerdict.replace(/_/g, ' ');
+    metricsCol.appendChild(verdictBadge);
+
+    const grade = (item.grade || item.report?.parsed?.trade_grade || '').toUpperCase();
+    if (grade) {
+      const gradeBadge = document.createElement('span');
+      gradeBadge.className = `gf-grade-badge g-${grade.toLowerCase().replace('_', '-')}`;
+      gradeBadge.textContent = grade.replace('A_PLUS', 'A+');
+      gradeBadge.title = 'Setup grade';
+      metricsCol.appendChild(gradeBadge);
+    }
+
+    // Conviction pill
+    if (item.conviction) {
+      const convPill = document.createElement('span');
+      convPill.className = 'sh-conv';
+      convPill.innerHTML = `Conviction <b>${item.conviction}%</b>`;
+      metricsCol.appendChild(convPill);
+    }
+
+    // Price and change
+    if (item.price && item.price !== '—') {
+      const priceWrap = document.createElement('div');
+      priceWrap.className = 'sh-price-wrap';
+
+      const priceSpan = document.createElement('span');
+      priceSpan.className = 'sh-price';
+      priceSpan.textContent = item.price;
+      priceWrap.appendChild(priceSpan);
+
+      if (item.day_change) {
+        const deltaSpan = document.createElement('span');
+        const isUp = item.day_change.includes('+');
+        const isDown = item.day_change.includes('-');
+        deltaSpan.className = `delta ${isUp ? 'up' : isDown ? 'down' : 'flat'}`;
+        deltaSpan.textContent = item.day_change;
+        priceWrap.appendChild(deltaSpan);
+      }
+      metricsCol.appendChild(priceWrap);
+    }
+
+    card.appendChild(metricsCol);
+
+    // Actions Right Column
+    const actionsCol = document.createElement('div');
+    actionsCol.className = 'sh-actions';
+
+    const viewBtn = document.createElement('button');
+    viewBtn.className = 'sh-view-btn';
+    viewBtn.textContent = 'View Report';
+    viewBtn.title = 'View the full one-week trade plan, sizing and fundamentals';
+    viewBtn.onclick = (e) => {
+      e.stopPropagation();
+      selectStockHistoryItem(item);
+    };
+    actionsCol.appendChild(viewBtn);
+
+    const delBtn = document.createElement('button');
+    delBtn.className = 'sh-del-btn';
+    delBtn.title = `Delete ${item.ticker || 'this analysis'}`;
+    delBtn.setAttribute('aria-label', `Delete ${item.ticker || 'analysis'}`);
+    delBtn.innerHTML = `<svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M19 6v14a2 2 0 0 1-2 2H7a2 2 0 0 1-2-2V6m3 0V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><line x1="10" y1="11" x2="10" y2="17"/><line x1="14" y1="11" x2="14" y2="17"/></svg>`;
+    delBtn.onclick = async (e) => {
+      e.stopPropagation();
+      await deleteStockHistoryItem(item.id, card, item.ticker || item.target_name);
+    };
+    actionsCol.appendChild(delBtn);
+
+    card.appendChild(actionsCol);
+
+    // Clicking anywhere on card views report
+    card.onclick = () => selectStockHistoryItem(item);
+
+    container.appendChild(card);
+  });
+}
+
+function selectStockHistoryItem(item) {
+  currentStockRunId = item.id;
+  document.querySelectorAll('.stock-hist-card').forEach((c) => {
+    c.classList.toggle('active', c.dataset.id === item.id);
+  });
+
+  window.__onDemandReportActive = true;
+  const parsedData = item.report?.parsed || item.report || item;
+  renderFinancialReport(parsedData, `History: ${item.ticker || item.target_name} at ${new Date(item.at || Date.now()).toLocaleTimeString()}`);
+
+  if (item.shot?.url) {
+    renderGfShot(item.shot);
+  } else {
+    renderGfShot(null);
+  }
+
+  if ($('gfInput')) {
+    $('gfInput').value = item.ticker || '';
+  }
+  if ($('stocksHeaderActiveSymbol')) {
+    $('stocksHeaderActiveSymbol').textContent = item.ticker || item.target_name || 'Stock';
+  }
+
+  $('gfReportPanel')?.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+  toast(`Loaded history for ${item.ticker || item.target_name}`, 'ok');
+}
+
+async function deleteStockHistoryItem(id, cardEl, label = 'Stock') {
+  cardEl.classList.add('removing');
+
+  try {
+    const res = await fetch(`/api/stocks/history/${id}`, { method: 'DELETE' });
+    if (!res.ok) {
+      console.warn('Server delete failed, updating local client');
+    }
+  } catch (err) {
+    console.warn('Network error during delete:', err.message);
+  }
+
+  stockHistoryItems = stockHistoryItems.filter((x) => x.id !== id);
+  try {
+    localStorage.setItem('stocksHistory', JSON.stringify(stockHistoryItems));
+  } catch {}
+
+  setTimeout(() => {
+    cardEl.remove();
+    const countEl = $('stocksHistCount');
+    const clearBtn = $('clearStocksHistBtn');
+    if (countEl) countEl.textContent = `${stockHistoryItems.length} analys${stockHistoryItems.length === 1 ? 'is' : 'es'}`;
+    if (!stockHistoryItems.length) {
+      if (clearBtn) clearBtn.style.display = 'none';
+      const container = $('stocksHistory');
+      if (container) {
+        container.innerHTML = `<div class="stocks-hist-empty">No calls on the desk yet. Pick a share above and click <b>Advise Me</b>.</div>`;
+      }
+    }
+  }, 250);
+
+  toast(`Deleted analysis for ${label}`, 'ok');
+}
+
+if ($('clearStocksHistBtn')) {
+  $('clearStocksHistBtn').onclick = async () => {
+    if (!confirm('Are you sure you want to delete all stock analysis history?')) return;
+    try {
+      await fetch('/api/stocks/history', { method: 'DELETE' });
+    } catch {}
+    stockHistoryItems = [];
+    try {
+      localStorage.removeItem('stocksHistory');
+    } catch {}
+    renderStockHistory([]);
+    toast('All stock analysis history cleared', 'ok');
+  };
+}
+
 /* ---------- controls ---------- */
 $('runNow').onclick = async () => {
   pinned = false;
@@ -809,11 +1722,14 @@ $('snapBtn').onclick = async () => {
 
 $('pauseBtn').onclick = async () => {
   const wasPaused = status.paused;
-  await fetch(wasPaused ? '/api/resume' : '/api/pause', { method: 'POST' });
+  // Apply the response rather than waiting for the SSE tick: the button is icon-only
+  // now, so its paused styling is the only feedback that the click landed.
+  const r = await fetch(wasPaused ? '/api/resume' : '/api/pause', { method: 'POST' });
+  if (r.ok) applyStatus(await r.json());
   toast(wasPaused ? 'Schedule resumed' : 'Schedule paused');
 };
 
-$('intervalSel').onchange = async (e) => {
+$('settingsIntervalSelect').onchange = async (e) => {
   const sel = e.target;
   const minutes = Number(sel.value);
   sel.disabled = true;
@@ -872,7 +1788,103 @@ async function toggleBrowserWindow() {
 $('windowBtn').onclick = toggleBrowserWindow;
 
 /* ---------- clear data ---------- */
-const closeModal = () => { $('clearModal').hidden = true; };
+const closeModal = () => { $('clearModal').hidden = true; $('settingsModal').hidden = true; };
+
+$('windowBtn').onclick = async () => {
+  const isVis = $('windowBtn').dataset.visible === 'true';
+  await fetch(`/api/window/${isVis ? 'hide' : 'show'}`, { method: 'POST' });
+};
+
+/* ---------- settings dialog ---------- */
+const settingsModal = $('settingsModal');
+const closeSettings = () => { settingsModal.hidden = true; };
+
+$('settingsBtn').onclick = () => {
+  settingsModal.hidden = false;
+  $('settingsClose').focus();
+};
+$('settingsClose').onclick = closeSettings;
+settingsModal.onclick = (e) => { if (e.target === settingsModal) closeSettings(); };
+
+/** Provider section: which segment is live, the model in use, and the key row. */
+function renderProviderSettings(s) {
+  const provider = s.provider || 'ollama';
+  document.querySelectorAll('#providerSegment .segment').forEach((btn) => {
+    const on = btn.dataset.value === provider;
+    btn.classList.toggle('active', on);
+    btn.setAttribute('aria-selected', String(on));
+  });
+  if ($('geminiKeyRow')) $('geminiKeyRow').hidden = provider !== 'gemini';
+
+  const model = s.model || s.ai?.model || (s.ai?.models || [])[0];
+  if (model && $('modelName')) $('modelName').textContent = model;
+  if ($('settingsFootMeta')) {
+    $('settingsFootMeta').textContent = `${provider}${model ? ` · ${model}` : ''}`;
+  }
+  if ($('geminiKeyState') && provider === 'gemini') {
+    $('geminiKeyState').innerHTML = s.ai?.ok
+      ? 'A key is configured. Enter a new one to replace it for this session.'
+      : 'No working key. Paste one here for this session, or add <code>GEMINI_API_KEY</code> to <code>.env</code> to persist it.';
+  }
+}
+
+document.querySelectorAll('#providerSegment .segment').forEach((btn) => {
+  btn.onclick = async () => {
+    const provider = btn.dataset.value;
+    try {
+      const r = await fetch('/api/provider', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ provider }),
+      });
+      const s = await r.json();
+      if (!r.ok) throw new Error(s.error || 'failed to change provider');
+      applyStatus(s);
+      renderProviderSettings(s);
+      pollProvider();
+      toast(`AI provider switched to ${provider}`, 'ok');
+    } catch (e) {
+      toast(`Could not switch provider: ${e.message}`, 'bad');
+    }
+  };
+});
+
+document.querySelectorAll('#themeSegment .segment').forEach((btn) => {
+  btn.onclick = () => applyTheme(btn.dataset.value);
+});
+
+$('geminiKeyReveal').onclick = () => {
+  const input = $('geminiKeyInput');
+  input.type = input.type === 'password' ? 'text' : 'password';
+  input.focus();
+};
+
+$('settingsClearBtn').onclick = () => {
+  closeSettings();
+  $('clearModal').hidden = false;
+  $('clearCancel').focus();
+};
+
+$('saveGeminiKeyBtn').onclick = async () => {
+  const apiKey = $('geminiKeyInput').value.trim();
+  if (!apiKey) {
+    toast('Please enter a valid API key', 'error');
+    return;
+  }
+  try {
+    const r = await fetch('/api/gemini/key', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ apiKey }),
+    });
+    const s = await r.json();
+    if (!r.ok) throw new Error(s.error || 'failed to save API key');
+    toast('Gemini API Key updated successfully!');
+    $('geminiKeyInput').value = ''; // clear for security
+  } catch (e) {
+    toast(`Error saving API key: ${e.message}`, 'error');
+  }
+};
 
 $('clearBtn').onclick = () => { $('clearModal').hidden = false; $('clearCancel').focus(); };
 $('clearCancel').onclick = closeModal;
@@ -909,11 +1921,14 @@ document.addEventListener('keydown', (e) => {
   }
 });
 
+applyTheme(localStorage.getItem(THEME_KEY) || 'dark');
 resetView();
+initScreen();
 connect();
 loadHistory();
-pollOllama();
+loadStockHistory();
+pollProvider();
 refreshTrend();
 setInterval(tickCountdown, 250);
-setInterval(pollOllama, 15000);
+setInterval(pollProvider, 15000);
 setInterval(refreshTrend, 30000);

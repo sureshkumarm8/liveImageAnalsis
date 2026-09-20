@@ -1,8 +1,9 @@
 import express from 'express';
 import config from './config.js';
-import { checkOllama, loadedModels, unloadModel } from './ollama.js';
+import { checkProvider, loadedModels, unloadModel, analyseFinancialReport } from './ai.js';
 import { buildTrend } from './trend.js';
 import { getQuote } from './quote.js';
+import { tradingWindow, applySizing } from './swing.js';
 
 export function createServer({ store, scheduler, capture }) {
   const app = express();
@@ -16,19 +17,27 @@ export function createServer({ store, scheduler, capture }) {
   app.use(express.static(config.paths.publicDir));
 
   app.get('/api/status', async (req, res) => {
-    let ollama = { ok: false };
+    let ai = { ok: false };
     try {
-      ollama = await checkOllama();
+      ai = await checkProvider();
     } catch (err) {
-      ollama = { ok: false, error: err.message };
+      ai = { ok: false, error: err.message };
     }
-    if (ollama.ok) ollama.loaded = await loadedModels();
+    if (ai.ok) ai.loaded = await loadedModels();
     res.json({
       ...scheduler.status(),
-      ollama,
+      provider: config.provider,
+      ai,
       quote: await getQuote().catch((err) => ({ ok: false, error: err.message })),
       windowVisible: capture.windowVisible,
+      kiteEnabled: capture.kiteEnabled,
+      googleFinance: {
+        enabled: capture.googleFinanceEnabled,
+        url: capture.googleFinanceUrl || config.browser.googleFinanceUrl,
+        symbol: capture.googleFinanceSymbol || 'Overview',
+      },
       archive: { enabled: store.archive.enabled, dir: store.archive.root },
+      advisor: { ...config.advisor, window: tradingWindow(new Date(), config.advisor.sessions) },
       windowControl: Boolean(capture.cdp) && config.browser.tuckWindow,
       targets: await Promise.all(
         config.targets.map(async (t) => {
@@ -153,6 +162,26 @@ export function createServer({ store, scheduler, capture }) {
     }
   });
 
+  app.post('/api/provider', (req, res) => {
+    const provider = req.body?.provider;
+    if (provider === 'gemini' || provider === 'ollama') {
+      config.provider = provider;
+      // status() now carries `provider` and the model of whichever one is live, so the
+      // settings dialog can render the new state straight from this response.
+      return res.json(scheduler.status());
+    }
+    return res.status(400).json({ error: 'Invalid provider' });
+  });
+
+  app.post('/api/gemini/key', (req, res) => {
+    const apiKey = req.body?.apiKey;
+    if (typeof apiKey === 'string') {
+      config.gemini.apiKey = apiKey;
+      return res.json({ ok: true, message: 'API key updated' });
+    }
+    return res.status(400).json({ error: 'Invalid API key' });
+  });
+
   app.post('/api/pause', (req, res) => {
     scheduler.pause();
     res.json(scheduler.status());
@@ -163,8 +192,9 @@ export function createServer({ store, scheduler, capture }) {
     res.json(scheduler.status());
   });
 
-  app.post('/api/ollama/unload', async (req, res) => {
-    res.json(await unloadModel());
+  app.post('/api/ai/unload', async (req, res) => {
+    const result = await unloadModel();
+    res.json(result);
   });
 
   app.post('/api/window/:action', async (req, res) => {
@@ -177,6 +207,120 @@ export function createServer({ store, scheduler, capture }) {
   app.post('/api/reload/:id', async (req, res) => {
     const result = await capture.navigate(req.params.id);
     res.json(result);
+  });
+
+  app.post('/api/kite-toggle', (req, res) => {
+    if (req.body && typeof req.body.enabled === 'boolean') {
+      capture.kiteEnabled = req.body.enabled;
+    } else {
+      capture.kiteEnabled = !capture.kiteEnabled;
+    }
+    return res.json({ ok: true, kiteEnabled: capture.kiteEnabled });
+  });
+
+  app.post('/api/google-finance/toggle', (req, res) => {
+    if (req.body && typeof req.body.enabled === 'boolean') {
+      capture.googleFinanceEnabled = req.body.enabled;
+    } else {
+      capture.googleFinanceEnabled = !capture.googleFinanceEnabled;
+    }
+    if (capture.googleFinanceEnabled) {
+      capture.pageFor('googlefinance').catch(() => {});
+    }
+    return res.json({ ok: true, googleFinanceEnabled: capture.googleFinanceEnabled });
+  });
+
+  app.post('/api/google-finance/target', async (req, res) => {
+    const query = req.body?.query || req.body?.url || req.body?.ticker;
+    try {
+      const result = await capture.setGoogleFinanceTarget(query);
+      return res.json(result);
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  app.post('/api/google-finance/analyse', async (req, res) => {
+    try {
+      const query = req.body?.query || req.body?.ticker || req.body?.symbol;
+      const d = new Date();
+      const pad2 = (n) => String(n).padStart(2, '0');
+      const stamp = `${d.getFullYear()}${pad2(d.getMonth() + 1)}${pad2(d.getDate())}-${pad2(d.getHours())}${pad2(
+        d.getMinutes(),
+      )}${pad2(d.getSeconds())}`;
+      const shot = await capture.captureGoogleFinanceResearch({ symbol: query, stamp });
+      if (!shot.ok) {
+        return res.status(502).json({ ok: false, error: shot.error || 'Failed to capture Google Finance AI Research screenshot' });
+      }
+
+      // The client brief the adviser sizes against. Clamped so a stray value from the
+      // dashboard can never produce a nonsensical position.
+      const clamp = (v, lo, hi, dflt) => {
+        const n = Number(v);
+        return Number.isFinite(n) && n > 0 ? Math.min(Math.max(n, lo), hi) : dflt;
+      };
+      const context = {
+        capital: clamp(req.body?.capital, 1000, 1e9, config.advisor.capital),
+        riskPct: clamp(req.body?.riskPct, 0.25, 10, config.advisor.riskPct),
+        maxAllocPct: clamp(req.body?.maxAllocPct, 5, 100, config.advisor.maxAllocPct),
+        currency: config.advisor.currency,
+        window: tradingWindow(new Date(), config.advisor.sessions),
+      };
+
+      const report = await analyseFinancialReport(shot, { context });
+      let item = null;
+      if (report.ok && report.parsed) {
+        // Sizing and reward:risk are recomputed from the levels the model quoted, so the
+        // share count on screen is arithmetic rather than the model's mental maths.
+        applySizing(report.parsed, context);
+        const p = report.parsed;
+        item = {
+          id: `stock-${stamp}`,
+          ticker: p.ticker || query || 'Stock',
+          target_name: p.target_name || p.ticker || query || 'Stock',
+          at: new Date().toISOString(),
+          verdict: p.short_term_verdict || 'NEUTRAL',
+          grade: p.trade_grade || '',
+          setup: p.setup_type || '',
+          conviction: p.conviction_score || 0,
+          price: p.current_price || '—',
+          day_change: p.day_change || '',
+          health: p.financial_health || 'neutral',
+          horizon: p.time_horizon || `Exit by ${context.window.exitBy}`,
+          summary: p.verdict_summary || p.analyst_takeaway || '',
+          shot: shot?.url ? { file: shot.file, url: shot.url, label: shot.label } : null,
+          brief: { capital: context.capital, riskPct: context.riskPct, maxAllocPct: context.maxAllocPct },
+          report,
+        };
+        await store.addStockRun(item);
+      }
+      return res.json({ ok: report.ok, shot, report, item, context });
+    } catch (err) {
+      return res.status(500).json({ ok: false, error: err.message });
+    }
+  });
+
+  // --- STOCKS ANALYSIS HISTORY ENDPOINTS -----------------------------
+  app.get('/api/stocks/history', (req, res) => {
+    const limit = Math.min(Number(req.query.limit) || 100, 200);
+    res.json(store.listStockRuns(limit));
+  });
+
+  app.get('/api/stocks/run/:id', (req, res) => {
+    const run = store.getStockRun(req.params.id);
+    if (!run) return res.status(404).json({ error: 'not found' });
+    return res.json(run);
+  });
+
+  app.delete('/api/stocks/history/:id', async (req, res) => {
+    const ok = await store.deleteStockRun(req.params.id);
+    if (!ok) return res.status(404).json({ error: 'not found' });
+    return res.json({ ok: true, id: req.params.id });
+  });
+
+  app.delete('/api/stocks/history', async (req, res) => {
+    const result = await store.clearStockRuns();
+    return res.json({ ok: true, ...result });
   });
 
   // Debug helper for tuning the per-site capture selectors.

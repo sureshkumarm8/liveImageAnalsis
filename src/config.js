@@ -13,6 +13,25 @@ const num = (v, d) => (v === undefined || v === '' || Number.isNaN(Number(v)) ? 
 export const config = {
   port: num(process.env.PORT, 4321),
   intervalMs: num(process.env.INTERVAL_SECONDS, 60) * 1000,
+  provider: process.env.AI_PROVIDER || 'ollama',
+
+  gemini: {
+    apiKey: process.env.GEMINI_API_KEY,
+    model: process.env.GEMINI_MODEL || 'gemini-3.8-flash',
+    temperature: num(process.env.GEMINI_TEMPERATURE, 0.3),
+  },
+
+  // Defaults for the one-week swing adviser on the Stocks screen. The dashboard can
+  // override capital and risk per request; these are what a fresh browser starts with
+  // and what the API falls back to when the body omits them.
+  advisor: {
+    capital: num(process.env.ADVISOR_CAPITAL, 100000),
+    riskPct: num(process.env.ADVISOR_RISK_PCT, 2),
+    maxAllocPct: num(process.env.ADVISOR_MAX_ALLOC_PCT, 25),
+    currency: process.env.ADVISOR_CURRENCY || '₹',
+    // How many NSE sessions the trade may live for. "Within a week" = 5.
+    sessions: num(process.env.ADVISOR_SESSIONS, 5),
+  },
 
   ollama: {
     host: process.env.OLLAMA_HOST || 'http://localhost:11434',
@@ -60,8 +79,8 @@ export const config = {
   browser: {
     headless: process.env.HEADLESS === 'true',
     profileDir: process.env.PROFILE_DIR || path.join(ROOT, 'data', 'browser-profile'),
-    width: num(process.env.VIEWPORT_WIDTH, 1600),
-    height: num(process.env.VIEWPORT_HEIGHT, 950),
+    width: num(process.env.VIEWPORT_WIDTH, 1680),
+    height: num(process.env.VIEWPORT_HEIGHT, 960),
     // Renders the page at N physical pixels per CSS pixel, so screenshots come out at
     // N× resolution (2 = "retina"). Axis labels, the last-price tag and OI strike numbers
     // are ~10px text — at 1× the vision model routinely misreads their digits.
@@ -82,6 +101,16 @@ export const config = {
     // Bottom date-range tab clicked on the Kite chart each cycle.
     // One of: 1d, 5d, 1m, 3m, 6m, 1yr, 5yr, All. Empty string = leave the chart alone.
     kiteRange: process.env.KITE_RANGE === undefined ? '1d' : process.env.KITE_RANGE,
+    // Whether backup Kite chart capture is enabled.
+    kiteEnabled: process.env.KITE_ENABLED !== 'false',
+    // Whether Google Finance screen capture is enabled during routine runs (optional, defaults to false).
+    googleFinanceEnabled: process.env.GOOGLE_FINANCE_ENABLED === 'true',
+    // Target URL for Google Finance Beta
+    googleFinanceUrl: process.env.GOOGLE_FINANCE_URL || 'https://www.google.com/finance/beta',
+    // Timeout for waiting for Google Finance AI Research tool to generate insights
+    // The AI Research panel streams its answer; the one-week brief is a longer question
+    // than the old one, so give it time to finish before the screenshot is taken.
+    googleFinanceResearchWaitMs: num(process.env.GOOGLE_FINANCE_RESEARCH_WAIT_MS, 12000),
   },
 
   // Every finished run is also mirrored into data/exports/ as plain JSON + PNGs, so a
@@ -96,6 +125,7 @@ export const config = {
     data: path.join(ROOT, 'data'),
     shots: path.join(ROOT, 'data', 'shots'),
     history: path.join(ROOT, 'data', 'history.jsonl'),
+    stocksHistory: path.join(ROOT, 'data', 'stocks-history.jsonl'),
     exports: process.env.ARCHIVE_DIR || path.join(ROOT, 'data', 'exports'),
     publicDir: path.join(ROOT, 'public'),
     // Where the "Save snapshots" button writes its PNGs.
@@ -104,16 +134,30 @@ export const config = {
 
   targets: [
     {
+      id: 'fyers',
+      label: 'Fyers — NIFTY 50 Chart (Main)',
+      url: process.env.FYERS_URL || 'https://fyers.in/web/charts',
+      loginHost: 'fyers.in',
+    },
+    {
       id: 'kite',
-      label: 'Kite — NIFTY 50 Chart',
-      url: 'https://kite.zerodha.com/markets/ext/chart/web/tvc/INDICES/NIFTY%2050/256265',
+      label: 'Kite — NIFTY 50 Chart (Backup)',
+      url: process.env.KITE_URL || 'https://kite.zerodha.com/markets/ext/chart/web/tvc/INDICES/NIFTY%2050/256265',
       loginHost: 'kite.zerodha.com',
+      isBackup: true,
+      backupFor: 'fyers',
     },
     {
       id: 'sensibull',
       label: 'Sensibull — OI vs Strike (NIFTY)',
       url: 'https://web.sensibull.com/open-interest/oi-vs-strike?tradingsymbol=NIFTY',
       loginHost: 'web.sensibull.com',
+    },
+    {
+      id: 'googlefinance',
+      label: 'Google Finance — Financial Analysis',
+      url: process.env.GOOGLE_FINANCE_URL || 'https://www.google.com/finance/beta',
+      loginHost: 'google.com',
     },
   ],
 
@@ -123,13 +167,15 @@ export const config = {
     {
       id: 'nifty-1min-1day',
       label: 'NIFTY 50 — 1 min candles, 1 day',
-      target: 'kite',
+      target: 'fyers',
+      fallbackTarget: 'kite',
       kite: { interval: '1', range: '1d' },
     },
     {
       id: 'nifty-1day-1year',
       label: 'NIFTY 50 — daily candles, 1 year',
-      target: 'kite',
+      target: 'fyers',
+      fallbackTarget: 'kite',
       // The 1yr range tab forces weekly candles, so the window is set as a custom
       // 12-month range instead, which leaves the daily interval alone.
       kite: { interval: '1D', months: 12 },
@@ -146,6 +192,11 @@ export const config = {
       target: 'sensibull',
       url: 'https://web.sensibull.com/open-interest/multistrike-oi?tradingsymbol=NIFTY',
       selectors: ['.chart-and-chart-inputs', '.sn-page--oigraphs'],
+    },
+    {
+      id: 'google-finance-report',
+      label: 'Google Finance — Financial Analysis',
+      target: 'googlefinance',
     },
   ],
 

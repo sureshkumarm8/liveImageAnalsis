@@ -3,19 +3,19 @@ import Capture from './capture.js';
 import Store from './store.js';
 import Scheduler from './scheduler.js';
 import createServer from './server.js';
-import { checkOllama, unloadModel } from './ollama.js';
+import { checkProvider, unloadModel } from './ai.js';
 import { isMarketOpen } from './market.js';
 
 const log = (...a) => console.log(`[${new Date().toLocaleTimeString()}]`, ...a);
 
 async function main() {
-  log('Checking Ollama at', config.ollama.host, '...');
+  log(`Checking ${config.provider} provider...`);
   try {
-    const o = await checkOllama();
-    log(`Ollama OK. Models: ${o.models.join(', ') || '(none)'}`);
-    if (!o.hasModel) log(`WARNING: model "${config.ollama.model}" not found. Run: ollama pull ${config.ollama.model}`);
+    const o = await checkProvider();
+    if (!o.ok) log(`WARNING: ${config.provider} check failed:`, o.error);
+    if (!o.hasModel && config.provider === 'ollama') log(`WARNING: model "${config.ollama.model}" not found. Run: ollama pull ${config.ollama.model}`);
   } catch (err) {
-    log(`WARNING: Ollama not reachable (${err.message}). Screenshots will still be captured.`);
+    log(`WARNING: could not reach ${config.provider} (${err.message}). Screenshots will still be captured.`);
   }
 
   const store = new Store();
