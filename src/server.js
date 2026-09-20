@@ -286,6 +286,18 @@ export function createServer({ store, scheduler, capture }) {
     // Sizing and reward:risk are recomputed from the levels the model quoted, so the
     // share count on screen is arithmetic rather than the model's mental maths.
     applySizing(report.parsed, context);
+
+    // Capture the candlestick chart (YTD) after the research screenshot.
+    let chart = null;
+    try {
+      chart = await capture.captureGoogleFinanceChart({ symbol: query, stamp });
+      if (chart && !chart.ok) {
+        console.warn('Chart capture failed:', chart.error);
+      }
+    } catch (err) {
+      console.warn('Chart capture error:', err.message);
+    }
+
     const p = report.parsed;
     const item = {
       id: `stock-${stamp}`,
@@ -302,11 +314,12 @@ export function createServer({ store, scheduler, capture }) {
       horizon: p.time_horizon || `Exit by ${context.window.exitBy}`,
       summary: p.verdict_summary || p.analyst_takeaway || '',
       shot: shot?.url ? { file: shot.file, url: shot.url, label: shot.label } : null,
+      chart: chart?.ok ? { file: chart.file, url: chart.url, label: chart.label, chartUrl: chart.chartUrl } : null,
       brief: { capital: context.capital, riskPct: context.riskPct, maxAllocPct: context.maxAllocPct },
       report,
     };
     await store.addStockRun(item);
-    return { ok: true, shot, report, item };
+    return { ok: true, shot, chart, report, item };
   };
 
   app.post('/api/google-finance/analyse', async (req, res) => {
@@ -317,7 +330,7 @@ export function createServer({ store, scheduler, capture }) {
       if (!out.ok && !out.report) {
         return res.status(502).json({ ok: false, error: out.error });
       }
-      return res.json({ ok: out.ok, shot: out.shot, report: out.report, item: out.item || null, context, error: out.error });
+      return res.json({ ok: out.ok, shot: out.shot, chart: out.chart || null, report: out.report, item: out.item || null, context, error: out.error });
     } catch (err) {
       return res.status(500).json({ ok: false, error: err.message });
     }

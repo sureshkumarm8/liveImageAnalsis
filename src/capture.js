@@ -716,6 +716,72 @@ export class Capture {
   }
 
   /**
+   * Capture the Google Finance Beta candlestick chart for a specific ticker.
+   * URL pattern: https://www.google.com/finance/beta/quote/{TICKER}?type=candle&window=YTD
+   * Called after the AI Research capture so both screenshots are available for each analysis.
+   */
+  async captureGoogleFinanceChart({ symbol, stamp, chartWindow = 'YTD' } = {}) {
+    return this.serialise(async () => {
+      const d = new Date();
+      const p = (n) => String(n).padStart(2, '0');
+      const ts =
+        stamp ||
+        `${d.getFullYear()}${p(d.getMonth() + 1)}${p(d.getDate())}-${p(d.getHours())}${p(d.getMinutes())}${p(
+          d.getSeconds(),
+        )}`;
+
+      let ticker = (symbol || '').trim().toUpperCase();
+      if (!ticker) return { ok: false, error: 'No ticker provided for chart capture.' };
+
+      // Normalise common aliases the same way setGoogleFinanceTarget does.
+      if (ticker === 'NIFTY' || ticker === 'NIFTY 50' || ticker === 'NIFTY50') {
+        ticker = 'NIFTY_50:INDEXNSE';
+      } else if (!ticker.includes(':')) {
+        ticker = `${ticker}:NSE`;
+      }
+
+      const chartUrl = `https://www.google.com/finance/beta/quote/${encodeURIComponent(ticker)}?type=candle&window=${chartWindow}`;
+
+      const page = await this.pageFor('googlefinance');
+      if (!page || page.isClosed()) {
+        return { ok: false, error: 'Google Finance page is not available for chart capture.' };
+      }
+
+      try {
+        await page.goto(chartUrl, { waitUntil: 'domcontentloaded', timeout: config.browser.navTimeoutMs });
+        await page.waitForLoadState('networkidle', { timeout: 15000 }).catch(() => {});
+        await sleep(config.browser.settleMs);
+
+        // Dismiss any consent overlays
+        await hooksFor('googlefinance').ensure(page);
+        await sleep(1500);
+
+        const file = `${ts}-googlefinance-chart.png`;
+        const filePath = path.join(config.paths.shots, file);
+
+        await page.mouse.move(2, 2).catch(() => {});
+        await sleep(300);
+
+        const buffer = await page.screenshot(SHOT_OPTS);
+        await fs.writeFile(filePath, buffer);
+
+        return {
+          ok: true,
+          file,
+          url: `/shots/${file}`,
+          chartUrl,
+          symbol: ticker,
+          label: `${ticker} — Candle Chart (${chartWindow})`,
+          base64: buffer.toString('base64'),
+          bytes: buffer.length,
+        };
+      } catch (err) {
+        return { ok: false, error: err.message, chartUrl };
+      }
+    });
+  }
+
+  /**
    * Screenshot one configured snapshot view, writing the PNG into `outDir`.
    * Reuses the already-open (and logged-in) page for the view's target site.
    */

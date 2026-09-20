@@ -508,6 +508,22 @@ function renderGfShot(shot) {
   card.hidden = false;
 }
 
+function renderGfChart(chart) {
+  const card = $('gfChartCard');
+  const img = $('gfChartImg');
+  const meta = $('gfChartMeta');
+  if (!card || !img) return;
+  if (!chart || !chart.url) {
+    card.hidden = true;
+    return;
+  }
+  img.src = chart.url;
+  if (meta) {
+    meta.textContent = `${chart.label || 'Candlestick Chart (YTD)'} · ${fmtTime(chart.ts || Date.now())}`;
+  }
+  card.hidden = false;
+}
+
 function hasValidFinancialData(data) {
   if (!data || typeof data !== 'object') return false;
   // The Stocks screen shows a swing *call*, so a bare fundamentals blob (what the
@@ -1396,6 +1412,7 @@ $('gfAnalyseBtn').onclick = async () => {
       if (data.shot?.url) {
         renderGfShot(data.shot);
       }
+      renderGfChart(data.chart || null);
       toast('One-week swing call ready.', 'ok');
       await loadStockHistory();
       $('gfReportPanel').scrollIntoView({ behavior: 'smooth', block: 'nearest' });
@@ -1427,6 +1444,18 @@ if ($('gfShotToggle')) {
     if ($('gfShotCaret')) {
       $('gfShotCaret').setAttribute('aria-expanded', String(!gfShotCollapsed));
       $('gfShotCaret').title = gfShotCollapsed ? 'Expand' : 'Collapse';
+    }
+  };
+}
+
+let gfChartCollapsed = false;
+if ($('gfChartToggle')) {
+  $('gfChartToggle').onclick = () => {
+    gfChartCollapsed = !gfChartCollapsed;
+    $('gfChartCard').classList.toggle('collapsed', gfChartCollapsed);
+    if ($('gfChartCaret')) {
+      $('gfChartCaret').setAttribute('aria-expanded', String(!gfChartCollapsed));
+      $('gfChartCaret').title = gfChartCollapsed ? 'Expand' : 'Collapse';
     }
   };
 }
@@ -2122,6 +2151,7 @@ function selectStockHistoryItem(item) {
   } else {
     renderGfShot(null);
   }
+  renderGfChart(item.chart || null);
 
   if ($('gfInput')) {
     $('gfInput').value = item.ticker || '';

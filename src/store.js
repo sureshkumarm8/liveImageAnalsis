@@ -107,6 +107,9 @@ export class Store {
     if (removed?.shot?.file && removed.shot.file.includes('-googlefinance-research.png')) {
       fsp.unlink(path.join(config.paths.shots, removed.shot.file)).catch(() => {});
     }
+    if (removed?.chart?.file && removed.chart.file.includes('-googlefinance-chart.png')) {
+      fsp.unlink(path.join(config.paths.shots, removed.chart.file)).catch(() => {});
+    }
     return true;
   }
 
