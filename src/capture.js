@@ -47,13 +47,26 @@ async function findChartFrame(page, timeoutMs = 20000) {
 const intervalLabelCache = new Map();
 
 async function setKiteInterval(frame, value) {
+  // Some TradingView builds (Fyers) show the favourite intervals as quick radio buttons
+  // in the toolbar; the first toolbar button is then "1m", not the dropdown.
+  const quick = frame.locator(`#header-toolbar-intervals [role="radio"][data-value="${value}"]`).first();
+  if (await vis(quick, 1500)) {
+    if ((await quick.getAttribute('aria-checked').catch(() => null)) !== 'true') {
+      await quick.click({ timeout: 8000 });
+      await sleep(2500);
+    }
+    return;
+  }
+
   const shown = (await frame.locator(INTERVAL_VALUE).first().textContent({ timeout: 8000 }).catch(() => '') || '').trim();
   if (shown && intervalLabelCache.get(value) === shown) return;
 
-  await frame.locator(INTERVAL_BTN).first().click({ timeout: 8000 });
+  const menuBtn = frame.locator('#header-toolbar-intervals button[aria-haspopup="menu"]').first();
+  const opener = (await menuBtn.count().catch(() => 0)) ? menuBtn : frame.locator(INTERVAL_BTN).first();
+  await opener.click({ timeout: 8000 });
   await sleep(1200);
 
-  const item = frame.locator(`[data-value="${value}"]`).first();
+  const item = frame.locator(`[data-value="${value}"]:visible`).first();
   if (!(await item.count().catch(() => 0))) {
     await frame.page().keyboard.press('Escape').catch(() => {});
     throw new Error(`interval "${value}" not offered by the chart`);
